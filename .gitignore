@@ -11,6 +11,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Sir Arnel's real farm records: his private business data. Kept on this PC
+# (and in Supabase) only, not on GitHub, unless he agrees to share them.
+data/
+
 # Evaluation output (regenerate with: python evaluate.py)
 backend/results/
 
