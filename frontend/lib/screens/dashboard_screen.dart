@@ -131,16 +131,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // Build calendar data map
       Map<DateTime, Map<String, dynamic>> calData = {};
 
-      // Add predictions to calendar
+      // Recorded cycle totals by (weigh date, block), to explain past days
+      final recordedTotals = <String, double>{
+        for (final l in logList)
+          '${l['date']}|${l['block']}': (l['yield_kg'] as num).toDouble(),
+      };
+
+      // Which cycle each plan day belongs to. Past cycles with a recorded
+      // total have status 'recorded' (filled by the daily job from the real
+      // total); they win over older forecast plans for the same day.
+      const priority = {'recorded': 3, 'active': 2, 'ended': 1};
+      final cycleById = {for (final c in _cycles) c['id']: c};
+
       for (var pred in predList) {
+        final cycle = cycleById[pred['cycle_id']];
+        final status = (cycle?['status'] ?? 'ended').toString();
+        final rank = priority[status];
+        if (rank == null) continue; // cancelled plans are not shown
         final date = DateTime.parse(pred['tap_date']);
         final normalizedDate = DateTime(date.year, date.month, date.day);
+        final current = calData[normalizedDate];
+        if (current != null && (current['rank'] as int) > rank) continue;
+        final estimated = status == 'recorded';
+        final cycleEnd = cycle?['end_date']?.toString();
         calData[normalizedDate] = {
           'block': pred['block'],
           'predicted_yield': pred['predicted_yield'],
           'actual_yield': pred['actual_yield'],
           'weather': pred['weather'],
+          'rainfall': pred['rainfall'],
           'type': 'prediction',
+          'rank': rank,
+          // Past day: share of a REAL recorded total, not a measurement
+          'estimated': estimated,
+          'cycle_end': cycleEnd,
+          'cycle_total': estimated
+              ? recordedTotals['$cycleEnd|${pred['block']}']
+              : null,
         };
       }
 
@@ -345,6 +372,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // ----------------------------------------------------------- day details
 
+  /// "2026-06-15" -> "15 Jun"
+  String _prettyDay(dynamic iso) {
+    final d = DateTime.tryParse(iso?.toString() ?? '');
+    if (d == null) return '';
+    return '${d.day} ${_months[d.month - 1].substring(0, 3)}';
+  }
+
   void _showDayDetail(DateTime day) {
     final normalized = DateTime(day.year, day.month, day.day);
     final data = _calendarData[normalized];
@@ -354,6 +388,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final color = blockColor(block);
     final hasActual = data['actual_yield'] != null;
     final isPast = day.isBefore(DateTime.now());
+    final estimated = data['estimated'] == true && data['cycle_total'] != null;
 
     showModalBottomSheet(
       context: context,
@@ -376,11 +411,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(height: 16),
             DetailLine(
               label: 'Weather',
-              value: (data['weather'] ?? 'Unknown').toString(),
+              value: data['rainfall'] is num && (data['rainfall'] as num) > 0
+                  ? '${data['weather'] ?? 'Unknown'} '
+                      '(${(data['rainfall'] as num).toStringAsFixed(1)} mm rain)'
+                  : (data['weather'] ?? 'Unknown').toString(),
             ),
             if (data['predicted_yield'] != null)
               DetailLine(
-                label: 'Expected harvest',
+                label: estimated ? 'Estimated harvest' : 'Expected harvest',
                 value: '${_kg(data['predicted_yield'])} kg',
               ),
             if (hasActual)
@@ -388,7 +426,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 label: 'Recorded harvest',
                 value: '${_kg(data['actual_yield'])} kg',
               ),
-            if (isPast) ...[
+            if (estimated) ...[
+              const SizedBox(height: 16),
+              NoteBar(
+                color: color,
+                background: color.withValues(alpha: 0.08),
+                child: Text(
+                  'Estimated from the real cycle total: '
+                  '$block\'s ${_kg(data['cycle_total'])} kg weighed on '
+                  '${_prettyDay(data['cycle_end'])}, shared across its tapping '
+                  'days by each day\'s actual weather. The harvest is weighed '
+                  'once per cycle, so single days are not measured.',
+                  style: AppText.body,
+                ),
+              ),
+            ] else if (isPast) ...[
               const SizedBox(height: 16),
               // One place to record harvests: the Production tab's cycle
               // totals are what the forecast learns from
@@ -417,7 +469,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (data == null) return null;
 
     final color = blockColor(data['block'].toString());
-    final recorded = data['actual_yield'] != null;
+    // Filled = backed by a real recorded harvest (a day measured, or a past
+    // day estimated from its cycle's recorded total)
+    final recorded = data['actual_yield'] != null || data['estimated'] == true;
     final predicted = data['predicted_yield'];
     final marked = today || selected;
 
@@ -657,7 +711,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _LegendDot(color: AppColors.forest, label: 'Block A'),
             _LegendDot(color: AppColors.bronze, label: 'Block B'),
             Text(
-              'Filled = recorded · small figure = expected kg',
+              'Filled = from a recorded harvest · light = forecast · tap a day for details',
               style: AppText.caption,
             ),
           ],

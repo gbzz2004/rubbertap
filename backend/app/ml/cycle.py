@@ -75,10 +75,14 @@ def weather_weight(label: str, rain_mm: float) -> float:
     return WEATHER_BASE_WEIGHT[label]
 
 
-def fetch_daily_weather(start: date, end: date, lat: float, lon: float) -> dict:
-    """Daily weather from Open-Meteo (free, no key, up to 16 days ahead)."""
+def fetch_daily_weather(start: date, end: date, lat: float, lon: float,
+                        history: bool = False) -> dict:
+    """Daily weather from Open-Meteo (free, no key).
+    history=False: forecast (3 months back to 16 days ahead).
+    history=True:  historical archive (any past date up to about 5 days ago)."""
     resp = requests.get(
-        "https://api.open-meteo.com/v1/forecast",
+        "https://archive-api.open-meteo.com/v1/archive" if history
+        else "https://api.open-meteo.com/v1/forecast",
         params={
             "latitude": lat,
             "longitude": lon,
@@ -94,6 +98,8 @@ def fetch_daily_weather(start: date, end: date, lat: float, lon: float) -> dict:
 
     weather = {}
     for i, day in enumerate(daily["time"]):
+        if daily["weather_code"][i] is None:
+            continue  # not available yet (the archive lags a few days)
         weather[day] = {
             "code": int(daily["weather_code"][i] or 0),
             "rain": float(daily["precipitation_sum"][i] or 0.0),

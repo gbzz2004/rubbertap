@@ -27,7 +27,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from app.ml.auto_cycle import ensure_current_cycle, manila_today
+from app.ml.auto_cycle import backfill_recorded_cycles, ensure_current_cycle, manila_today
 from app.ml.models import run_all_models
 
 BLOCKS = ("Block A", "Block B")
@@ -77,6 +77,7 @@ def main():
             raise RuntimeError("No block has enough records to forecast")
         if args.dry_run:
             print(ensure_current_cycle(db, _best_totals(results), today, dry_run=True))
+            print(backfill_recorded_cycles(db, today, dry_run=True))
             print("Dry run: nothing written.")
             return
 
@@ -109,6 +110,9 @@ def main():
         print(ensure_current_cycle(db, _best_totals(results), today))
     else:
         print("Cycle: skipped, not every block has a forecast yet.")
+
+    # Fill the calendar for past cycles from their recorded totals
+    print(backfill_recorded_cycles(db, today))
 
 
 def _best_totals(results: dict) -> dict:
