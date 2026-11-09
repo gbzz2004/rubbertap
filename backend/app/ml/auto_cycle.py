@@ -1,14 +1,17 @@
 """
-Automatic 15-day tapping cycles, run by the daily GitHub job (run_forecasts.py).
+Automatic tapping cycles, run by the daily GitHub job (run_forecasts.py).
+
+Cycles follow Sir Arnel's calendar: he weighs each cycle on the 15th and on
+the 30th (last day of February), so a cycle runs (day after the previous
+weigh date) .. 15th, or 16th .. 30th (see cycle_bounds in app/ml/cycle.py).
 
 Each morning, after the forecast is saved:
   1. Cycles whose end date has passed are marked 'ended' (tidy-up).
-  2. If no active cycle covers today, the next cycle is created and planned:
-       - back to back: it starts the day after the last cycle ended, so the
-         15-day rhythm never drifts (even if the job missed a day or two);
-       - after a long break (no cycle for 15+ days) it starts today.
-     The plan splits each block's ML forecast total across its tap days by
-     the Open-Meteo weather forecast (app/ml/cycle.py; the weights there are
+  2. If no active cycle covers today, the calendar cycle containing today is
+     created and planned. If an older cycle still overlaps it, the new one
+     starts the day after that cycle ends, so plans never overlap.
+     The plan splits each block's ML forecast across its tap days by the
+     Open-Meteo weather forecast (app/ml/cycle.py; the weights there are
      ASSUMPTIONS, see that file).
   A running cycle and recorded harvests are never changed.
 The app's "New cycle" button remains as a manual override.
@@ -17,7 +20,7 @@ The app's "New cycle" button remains as a manual override.
 import os
 from datetime import date, datetime, timedelta, timezone
 
-from app.ml.cycle import CYCLE_LENGTH, build_daily_plan, fetch_daily_weather
+from app.ml.cycle import build_daily_plan, cycle_bounds, fetch_daily_weather
 
 MANILA = timezone(timedelta(hours=8))  # the Philippines has no daylight saving
 
@@ -30,20 +33,23 @@ def _d(value) -> date:
     return date.fromisoformat(str(value)[:10])
 
 
-def next_cycle_start(cycles: list, today: date):
-    """The start date for a new cycle, or None if none is needed today."""
+def plan_window(cycles: list, today: date):
+    """(start, end, anchor) for the cycle to create today, or None if an
+    active cycle already covers today. anchor = the calendar cycle's first
+    day, which fixes which block is tapped on which day."""
     live = [c for c in cycles if c.get("status") != "cancelled"]
-    if any(_d(c["start_date"]) <= today <= _d(c["end_date"]) for c in live
-           if c.get("status") == "active"):
-        return None  # a cycle is running
-    if any(_d(c["start_date"]) > today for c in live if c.get("status") == "active"):
-        return None  # a future cycle is already planned
-    ends = [_d(c["end_date"]) for c in live]
-    if ends:
-        candidate = max(ends) + timedelta(days=1)
-        if candidate <= today and (today - candidate).days < CYCLE_LENGTH:
-            return candidate  # back to back with the last cycle
-    return today  # first cycle, or after a long break
+    if any(c.get("status") == "active" and _d(c["start_date"]) <= today <= _d(c["end_date"])
+           for c in live):
+        return None
+    anchor, end = cycle_bounds(today)
+    start = anchor
+    for c in live:  # never overlap an older plan
+        c_end = _d(c["end_date"])
+        if c_end >= start and _d(c["start_date"]) <= end:
+            start = max(start, c_end + timedelta(days=1))
+    if start > today:
+        return None  # a plan already covers today's cycle up to a later day
+    return start, end, anchor
 
 
 def ensure_current_cycle(db, block_totals: dict, today: date = None, dry_run: bool = False):
@@ -59,22 +65,22 @@ def ensure_current_cycle(db, block_totals: dict, today: date = None, dry_run: bo
             c["status"] = "ended"
 
     # 2) Is a new cycle needed?
-    start = next_cycle_start(cycles, today)
-    if start is None:
+    window = plan_window(cycles, today)
+    if window is None:
         return "Cycle: one is already running; nothing to do."
-    end = start + timedelta(days=CYCLE_LENGTH - 1)
+    start, end, anchor = window
 
     weather = fetch_daily_weather(
         start, end,
         float(os.getenv("FARM_LAT", "7.762639")),
         float(os.getenv("FARM_LON", "122.567028")),
     )
-    days = build_daily_plan(start, block_totals, weather)
+    days = build_daily_plan(start, block_totals, weather, end=end, anchor=anchor)
 
     if dry_run:
         total = {b: round(sum(d["predicted_yield"] for d in days if d["block"] == b), 2)
                  for b in block_totals}
-        return f"Cycle (dry run): would create {start} to {end}, planned kg {total}"
+        return f"Cycle (dry run): would create {start} to {end} (cycle of {anchor}), planned kg {total}"
 
     cycle = db.table("tapping_cycles").insert({
         "start_date": start.isoformat(),

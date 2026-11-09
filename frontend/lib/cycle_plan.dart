@@ -44,6 +44,30 @@ class PlanException implements Exception {
   String toString() => message;
 }
 
+/// Which block is tapped on day [n] of a cycle (day 1 = first day).
+/// Day 16 (only in cycles that include a 31st) goes to Block B like day 15.
+String blockForDay(int n) => blockADays.contains(n) ? 'Block A' : 'Block B';
+
+DateTime _weighDay(int year, int month) {
+  final last = DateTime(year, month + 1, 0).day; // last day of the month
+  return DateTime(year, month, last < 30 ? last : 30);
+}
+
+/// The farm's cycle containing [d], as (first day, last day).
+/// Sir Arnel weighs on the 15th and the 30th (last day of February), so
+/// cycles run (day after the previous weigh date) .. 15th, and 16th .. 30th.
+/// Same rule as cycle_bounds() in backend/app/ml/cycle.py.
+(DateTime, DateTime) cycleBounds(DateTime d) {
+  d = DateTime(d.year, d.month, d.day);
+  if (d.day <= 15) {
+    final prevEnd = _weighDay(d.year, d.month - 1); // DateTime handles month 0
+    return (prevEnd.add(const Duration(days: 1)), DateTime(d.year, d.month, 15));
+  }
+  final end = _weighDay(d.year, d.month);
+  if (!d.isAfter(end)) return (DateTime(d.year, d.month, 16), end);
+  return (end.add(const Duration(days: 1)), DateTime(d.year, d.month + 1, 15));
+}
+
 String _weatherLabel(int code, double windKmh) {
   if (_rainCodes.contains(code)) return 'Rainy';
   if (windKmh >= _windyKmh) return 'Windy';
@@ -95,10 +119,10 @@ Future<Map<String, double>> latestBlockTotals() async {
   return totals;
 }
 
-/// Daily weather from Open-Meteo for [start] .. [start]+14 days.
-Future<Map<String, Map<String, double>>> fetchDailyWeather(
-    DateTime start) async {
-  final end = start.add(const Duration(days: cycleLength - 1));
+/// Daily weather from Open-Meteo for [start] .. [end] (default 15 days).
+Future<Map<String, Map<String, double>>> fetchDailyWeather(DateTime start,
+    [DateTime? end]) async {
+  end ??= start.add(const Duration(days: cycleLength - 1));
   try {
     final dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 10),
@@ -135,11 +159,26 @@ Future<Map<String, Map<String, double>>> fetchDailyWeather(
 }
 
 /// Split each block's cycle total across its tap days by weather.
+///
+/// [start]..[end] are the days to plan (default: 15 days from [start]).
+/// [anchor] is the first day of the farm's cycle (default: [start]); day
+/// numbers, and so which block is tapped, count from it. When planning starts
+/// part-way into a cycle, each block's total is scaled to the share of its
+/// tap days that are still planned. Same as build_daily_plan() in Python.
 List<Map<String, dynamic>> buildDailyPlan(DateTime start,
-    Map<String, double> blockTotals, Map<String, Map<String, double>> weather) {
+    Map<String, double> blockTotals, Map<String, Map<String, double>> weather,
+    {DateTime? end, DateTime? anchor}) {
+  // Whole-day arithmetic in UTC, so a timezone change can never skip a day
+  DateTime day(DateTime d) => DateTime.utc(d.year, d.month, d.day);
+  final s = day(start);
+  final e = day(end ?? start.add(const Duration(days: cycleLength - 1)));
+  final a = day(anchor ?? start);
+  final cycleDays = e.difference(a).inDays + 1;
+
   final days = <Map<String, dynamic>>[];
-  for (var n = 1; n <= cycleLength; n++) {
-    final d = start.add(Duration(days: n - 1));
+  for (var i = 0; i <= e.difference(s).inDays; i++) {
+    final d = s.add(Duration(days: i));
+    final n = d.difference(a).inDays + 1;
     final w = weather[isoDate(d)];
     if (w == null) {
       throw PlanException('No weather forecast for ${isoDate(d)}.');
@@ -148,7 +187,7 @@ List<Map<String, dynamic>> buildDailyPlan(DateTime start,
     days.add({
       'day': n,
       'date': isoDate(d),
-      'block': blockADays.contains(n) ? 'Block A' : 'Block B',
+      'block': blockForDay(n),
       'weather': label,
       'temperature': w['temp'],
       'rainfall': double.parse(w['rain']!.toStringAsFixed(2)),
@@ -157,11 +196,17 @@ List<Map<String, dynamic>> buildDailyPlan(DateTime start,
   }
   blockTotals.forEach((block, total) {
     final blockDays = days.where((x) => x['block'] == block).toList();
+    if (blockDays.isEmpty) return;
+    var allTapDays = 0;
+    for (var n = 1; n <= cycleDays; n++) {
+      if (blockForDay(n) == block) allTapDays++;
+    }
+    final share = total * blockDays.length / allTapDays;
     final weightSum =
         blockDays.fold<double>(0, (s, x) => s + (x['_weight'] as double));
     for (final x in blockDays) {
       x['predicted_yield'] = double.parse(
-          (total * (x['_weight'] as double) / weightSum).toStringAsFixed(2));
+          (share * (x['_weight'] as double) / weightSum).toStringAsFixed(2));
     }
   });
   for (final x in days) {

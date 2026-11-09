@@ -112,7 +112,7 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
         return 'Cloudy';
       }
     } catch (e) {
-      return 'Sunny';
+      return ''; // unknown (no internet): the tapper picks it, no guessing
     }
   }
 
@@ -484,8 +484,10 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                   ),
                   if (!isEdit) ...[
                     const SizedBox(height: 6),
-                    const Text(
-                      'Filled in from the weather at the farm right now. Change it if the harvest day was different.',
+                    Text(
+                      detectedWeather.isEmpty
+                          ? 'Could not check the weather (no internet). Please pick the weather for this cycle.'
+                          : 'Filled in from the weather at the farm right now. Change it if the harvest day was different.',
                       style: AppText.caption,
                     ),
                   ],
@@ -502,6 +504,11 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                     child: ElevatedButton(
                       onPressed: () async {
                         if (!formKey.currentState!.validate()) return;
+                        if (weather.isEmpty) {
+                          showNote(sheetContext, 'Please pick the weather.',
+                              error: true);
+                          return;
+                        }
                         final kg = double.parse(yieldController.text);
                         // Unusual amounts and repeat records go straight
                         // into the forecast, so ask before saving them

@@ -176,7 +176,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: const Text('A cycle is already running', style: AppText.heading),
         content: Text(
           'The current cycle runs until ${until.day} ${_months[until.month - 1]}. '
-          'Start a new 15-day cycle from today instead?\n\n'
+          'Re-plan from today to the end of this cycle instead?\n\n'
           'The rest of the current plan will be replaced. '
           'Days with a recorded harvest are kept.',
           style: AppText.body,
@@ -217,17 +217,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       setState(() => _isLoading = true);
 
-      // 1) Make the per-day plan on the phone: each block's 15-day total from
-      //    the latest saved ML forecast, split across its tap days by the
-      //    Open-Meteo weather forecast (see lib/cycle_plan.dart).
+      // 1) Make the per-day plan on the phone, from today to the end of the
+      //    farm's calendar cycle (weighed on the 15th and 30th). Each block's
+      //    cycle total comes from the latest saved ML forecast and is split
+      //    across its tap days by the Open-Meteo weather forecast
+      //    (see lib/cycle_plan.dart).
       final start = DateTime.parse(startStr);
+      final (cycleStart, cycleEnd) = cycleBounds(start);
       final totals = await latestBlockTotals();
-      final weather = await fetchDailyWeather(start);
-      final days = buildDailyPlan(start, totals, weather);
+      final weather = await fetchDailyWeather(start, cycleEnd);
+      final days = buildDailyPlan(start, totals, weather,
+          end: cycleEnd, anchor: cycleStart);
       final plan = {
         'start_date': startStr,
-        'end_date':
-            isoDate(start.add(const Duration(days: cycleLength - 1))),
+        'end_date': isoDate(cycleEnd),
       };
 
       // 1b) Only now that the new plan is ready: end the running cycle(s).

@@ -16,6 +16,38 @@ CYCLE_LENGTH = 15
 BLOCK_A_DAYS = {1, 3, 5, 7, 9, 11, 13}       # 7 tap days
 BLOCK_B_DAYS = {2, 4, 6, 8, 10, 12, 14, 15}  # 8 tap days
 
+
+def block_for_day(n: int) -> str:
+    """Which block is tapped on day n of a cycle (day 1 = first day).
+    Days 1-15 follow the farm's schedule; day 16 (only in cycles that
+    include a 31st) goes to Block B like day 15."""
+    return "Block A" if n in BLOCK_A_DAYS else "Block B"
+
+
+def _month_end(year: int, month: int) -> date:
+    nxt = date(year + (month == 12), month % 12 + 1, 1)
+    return nxt - timedelta(days=1)
+
+
+def _weigh_day(year: int, month: int) -> date:
+    """Second weigh date of a month: the 30th, or the last day of February."""
+    return date(year, month, min(30, _month_end(year, month).day))
+
+
+def cycle_bounds(d: date):
+    """The farm's cycle containing date d. Sir Arnel weighs each cycle on
+    the 15th and on the 30th (last day of February), so cycles run
+    (day after the previous weigh date) .. 15th, and 16th .. 30th.
+    A 31st starts the next cycle (16 days); February's second cycle is short."""
+    if d.day <= 15:
+        prev = date(d.year - (d.month == 1), (d.month - 2) % 12 + 1, 1)
+        return _weigh_day(prev.year, prev.month) + timedelta(days=1), date(d.year, d.month, 15)
+    end = _weigh_day(d.year, d.month)
+    if d <= end:
+        return date(d.year, d.month, 16), end
+    nxt = date(d.year + (d.month == 12), d.month % 12 + 1, 15)
+    return end + timedelta(days=1), nxt
+
 # --- ASSUMED weather weights (tune or calibrate later) ---
 WEATHER_BASE_WEIGHT = {"Sunny": 1.0, "Cloudy": 0.95, "Windy": 0.85}
 RAIN_START_WEIGHT = 0.85   # weight for a rainy day with ~0 mm of rain
@@ -71,11 +103,23 @@ def fetch_daily_weather(start: date, end: date, lat: float, lon: float) -> dict:
     return weather
 
 
-def build_daily_plan(start: date, block_totals: dict, weather: dict) -> list:
-    """Split each block's ML cycle total across its tap days by weather."""
+def build_daily_plan(start: date, block_totals: dict, weather: dict,
+                     end: date = None, anchor: date = None) -> list:
+    """Split each block's ML cycle total across its tap days by weather.
+
+    start..end  the days to plan (default: 15 days from start)
+    anchor      first day of the farm's cycle (default: start); day numbers,
+                and so which block is tapped, count from here.
+    When planning starts part-way into a cycle (anchor < start), each block's
+    total is scaled to the share of its tap days that are still planned."""
+    end = end or start + timedelta(days=CYCLE_LENGTH - 1)
+    anchor = anchor or start
+    cycle_days = (end - anchor).days + 1
+
     days = []
-    for n in range(1, CYCLE_LENGTH + 1):
-        d = start + timedelta(days=n - 1)
+    for i in range((end - start).days + 1):
+        d = start + timedelta(days=i)
+        n = (d - anchor).days + 1
         w = weather.get(d.isoformat())
         if w is None:
             raise ValueError(f"No weather data for {d.isoformat()}")
@@ -84,7 +128,7 @@ def build_daily_plan(start: date, block_totals: dict, weather: dict) -> list:
         days.append({
             "day": n,
             "date": d.isoformat(),
-            "block": "Block A" if n in BLOCK_A_DAYS else "Block B",
+            "block": block_for_day(n),
             "weather": label,
             "temperature": w["temp"],
             "rainfall": round(w["rain"], 2),
@@ -93,9 +137,13 @@ def build_daily_plan(start: date, block_totals: dict, weather: dict) -> list:
 
     for block, total in block_totals.items():
         block_days = [x for x in days if x["block"] == block]
+        if not block_days:
+            continue
+        all_tap_days = sum(1 for n in range(1, cycle_days + 1) if block_for_day(n) == block)
+        share = total * len(block_days) / all_tap_days
         weight_sum = sum(x["_weight"] for x in block_days)
         for x in block_days:
-            x["predicted_yield"] = round(total * x["_weight"] / weight_sum, 2)
+            x["predicted_yield"] = round(share * x["_weight"] / weight_sum, 2)
 
     for x in days:
         del x["_weight"]

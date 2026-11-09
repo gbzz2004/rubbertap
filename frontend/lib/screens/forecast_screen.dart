@@ -573,9 +573,15 @@ class _ForecastScreenState extends State<ForecastScreen> {
   Widget _buildModelRow(Map<String, dynamic> m, bool isBest, _ForecastData d) {
     final info = _infoFor(m['model'].toString());
     final checked = _wasChecked(m);
+    // A method that could not be trained has no real forecast to show
+    final untrained = m['error'] != null && !checked;
 
     return InkWell(
-      onTap: () => _showDetails(m, d, isBest),
+      onTap: () => untrained
+          ? showNote(context,
+              '"${info.friendlyName}" needs more recorded cycles before it can '
+              'learn. It will start working as more harvests are recorded.')
+          : _showDetails(m, d, isBest),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -600,7 +606,10 @@ class _ForecastScreenState extends State<ForecastScreen> {
                     ],
                   ),
                 ),
-                Text('${_num(m['forecast_kg']).toStringAsFixed(1)} kg',
+                Text(
+                    untrained
+                        ? '—'
+                        : '${_num(m['forecast_kg']).toStringAsFixed(1)} kg',
                     style: AppText.heading),
                 const SizedBox(width: 4),
                 const Icon(Icons.chevron_right, color: AppColors.inkFaint),
@@ -613,8 +622,12 @@ class _ForecastScreenState extends State<ForecastScreen> {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 if (isBest)
-                  const Tag('Closest match', color: AppColors.forest, filled: true),
-                Tag(_reliabilityLabel(m), color: _reliabilityColor(m)),
+                  Tag(checked ? 'Closest match' : 'Used for the forecast',
+                      color: AppColors.forest, filled: true),
+                if (untrained)
+                  const Tag('Not enough data yet', color: AppColors.inkFaint)
+                else
+                  Tag(_reliabilityLabel(m), color: _reliabilityColor(m)),
                 if (checked)
                   Text(
                     'usually off by ±${_num(m['mae']).toStringAsFixed(1)} kg',

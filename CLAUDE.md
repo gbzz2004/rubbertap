@@ -19,6 +19,10 @@ There is NO login or registration, on purpose.
 - 15-day cycle. Block A is tapped on days 1,3,5,7,9,11,13. Block B on days
   2,4,6,8,10,12,14,15.
 - Mr. Arnel records ONE total per block per 15-day cycle (not per day).
+- He weighs on the 15th and the 30th, so cycles follow the calendar:
+  (day after the previous weigh date)..15th and 16th..30th (a 31st starts a
+  16-day cycle; February's second cycle is short). See cycle_bounds() in
+  backend/app/ml/cycle.py and cycleBounds() in frontend/lib/cycle_plan.dart.
 - Farm coordinates are set in the code (Block A's first corner is the reference point).
 
 ## Folder layout (C:\Users\Administrator\Desktop\rubbertap)
@@ -62,9 +66,14 @@ and restart it.
   0.1 CPU it will be far slower, so training there must run as a background job.
 - The weather weights that split a cycle total across tap days are ASSUMPTIONS
   (backend/app/ml/cycle.py), not learned from data.
-- The harvest data in Supabase may be synthetic (rows with notes = 'SYNTHETIC').
-  Mr. Arnel's real records are not all loaded yet. Never present synthetic
-  results as findings.
+- Real data since 2026-11-10: Sir Arnel's 18 records (9 cycles per block,
+  15 May - 30 Oct 2026; 15 Jul, 30 Jul, 30 Aug missing) are in Supabase and in
+  data/arnel_records.csv. The 96 synthetic rows were deleted (kept in
+  production_logs_history). 9 cycles is too few to compare the models
+  (needs ~15+ per block) or to train the LSTMs (need 12); older records are
+  needed for Chapter 4. Never present synthetic results as findings.
+- Old forecast_runs / forecast_results rows (ids up to run 4) and the cycle
+  Oct 30 - Nov 13 were made from synthetic data; they were not deleted.
 - The farm_blocks table has placeholder tree counts and areas. Replace them with real values.
 - Row-level security is OFF on the app's tables (no login by design), so anyone
   with the app's public key could change records. Mitigation since 2026-11-09:
