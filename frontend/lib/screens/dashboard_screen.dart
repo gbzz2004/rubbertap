@@ -3,6 +3,7 @@ import 'package:table_calendar/table_calendar.dart';
 import '../cycle_plan.dart';
 import '../main.dart';
 import '../record_store.dart';
+import '../tapping_advice.dart';
 import '../theme.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -20,6 +21,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _cyclesRecorded = 0;
   // Plain-language warnings about the latest cycle of each block
   List<String> _lowNotes = [];
+  // Advice for the next tapping morning (same as the Weather tab)
+  TappingAdvice? _morningAdvice;
 
   // Calendar
   DateTime _focusedDay = DateTime.now();
@@ -42,6 +45,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _isLoading = true;
       _offline = false;
     });
+    // Morning advice loads on its own; the dashboard never waits for it
+    fetchTappingAdvice().then((a) {
+      if (mounted) setState(() => _morningAdvice = a);
+    }).catchError((_) {});
     await Future.wait([
       _fetchDashboardData(),
       _fetchCalendarData(),
@@ -687,6 +694,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
             'Cycle ${_prettyDay(isoDate(cycleStart))} – ${_prettyDay(isoDate(cycleEnd))}',
             style: AppText.caption,
           ),
+          if (_morningAdvice != null) ...[
+            const SizedBox(height: 12),
+            NoteBar(
+              color: _morningAdvice!.color,
+              background: _morningAdvice!.soft,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_morningAdvice!.title, style: AppText.bodyStrong),
+                  const SizedBox(height: 2),
+                  Text(_morningAdvice!.text, style: AppText.body),
+                ],
+              ),
+            ),
+          ],
           if (weighDay) ...[
             const SizedBox(height: 12),
             const NoteBar(

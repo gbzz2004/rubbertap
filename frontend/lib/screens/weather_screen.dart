@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import '../theme.dart';
 import '../rain_alerts.dart';
 import '../record_store.dart';
+import '../tapping_advice.dart';
 
 class WeatherScreen extends StatefulWidget {
   const WeatherScreen({super.key});
@@ -34,6 +35,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
   Timer? _timer;
   bool _alertsOn = false;
   bool _alertsBusy = false;
+  // Advice for the next tapping MORNING (Open-Meteo, same source as the
+  // calendar). Null while loading or if it could not be downloaded.
+  TappingAdvice? _morningAdvice;
 
   static const double _farmLat = 7.762639;
   static const double _farmLon = 122.567028;
@@ -60,6 +64,10 @@ class _WeatherScreenState extends State<WeatherScreen> {
 
   Future<void> _fetchWeather() async {
     if (mounted) setState(() => _isLoading = true);
+    // The morning advice loads on its own: if it fails, the rest still shows
+    fetchTappingAdvice().then((a) {
+      if (mounted) setState(() => _morningAdvice = a);
+    }).catchError((_) {});
     try {
       final dio = Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 10),
@@ -312,7 +320,20 @@ class _WeatherScreenState extends State<WeatherScreen> {
     final w = _currentWeather!;
     final main = w['weather'][0]['main'].toString();
     final humidity = (w['main']['humidity'] as num).toDouble();
-    final advice = _advice(main, humidity);
+    // Prefer the advice for the tapping morning; fall back to "right now"
+    final morning = _morningAdvice;
+    final nowAdvice = _advice(main, humidity);
+    final advice = morning == null
+        ? _Advice(
+            title: 'Right now: ${nowAdvice.title.toLowerCase()}',
+            text: nowAdvice.text,
+            color: nowAdvice.color,
+            soft: nowAdvice.soft)
+        : _Advice(
+            title: morning.title,
+            text: morning.text,
+            color: morning.color,
+            soft: morning.soft);
 
     return RefreshIndicator(
       color: AppColors.forest,
@@ -345,6 +366,13 @@ class _WeatherScreenState extends State<WeatherScreen> {
                 Text(advice.title, style: AppText.bodyStrong),
                 const SizedBox(height: 4),
                 Text(advice.text, style: AppText.body),
+                const SizedBox(height: 6),
+                Text(
+                  morning == null
+                      ? 'Based on the weather right now. The morning forecast could not be loaded.'
+                      : 'For the tapping morning (4–11 AM), from the hourly forecast. General guidance.',
+                  style: const TextStyle(fontSize: 11, color: AppColors.inkFaint),
+                ),
               ],
             ),
           ),
