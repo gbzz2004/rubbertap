@@ -66,6 +66,11 @@ and restart it.
   Mr. Arnel's real records are not all loaded yet. Never present synthetic
   results as findings.
 - The farm_blocks table has placeholder tree counts and areas. Replace them with real values.
+- Row-level security is OFF on the app's tables (no login by design), so anyone
+  with the app's public key could change records. Mitigation since 2026-11-09:
+  every insert/update/delete of production_logs is copied by a trigger into
+  production_logs_history (RLS on, no policies: the app key cannot read or
+  change it). Restore queries: backend/sql/production_history.sql.
 - Free OpenWeatherMap data updates about every 2 hours and forecasts come in 3-hour steps.
 - The backend only runs on the developer's PC. Planned: deploy to Render
   (free tier is 512 MB / 0.1 CPU and sleeps after 15 minutes), train on the
