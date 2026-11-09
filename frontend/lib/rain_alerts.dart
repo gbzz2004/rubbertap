@@ -1,9 +1,10 @@
 import 'dart:ui';
 
-import 'package:dio/dio.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
+
+import 'farm_weather.dart';
 
 /// One warning that can be shown to the farmer.
 class RainAlert {
@@ -39,26 +40,21 @@ void rainAlertCallbackDispatcher() {
 class RainAlertService {
   RainAlertService._();
 
-  // --- Farm and weather source -------------------------------------------
-  static const double _farmLat = 7.762639;
-  static const double _farmLon = 122.567028;
-  static const String _apiKey = 'b4bf1e412a554e1efae968eda1f8b25e';
-
   // --- Rules (our own choices, easy to change) ---------------------------
-  /// How many 3-hour forecast steps to look at (4 steps = next 12 hours).
-  static const int _lookAheadSlots = 4;
+  // Weather comes from Open-Meteo (lib/farm_weather.dart), hour by hour.
+  /// How many hours ahead to look.
+  static const int _lookAheadHours = 12;
 
-  /// Chance of rain at or above this = "rain is coming".
-  static const double _likelyPop = 0.6;
+  /// Chance of rain (%) at or above this = "rain is coming".
+  static const int _likelyChance = 60;
 
-  /// Chance of rain at or above this = "rain is possible".
-  static const double _possiblePop = 0.3;
+  /// Chance of rain (%) at or above this = "rain is possible".
+  static const int _possibleChance = 30;
 
   /// Do not repeat the same (or a weaker) alert within this time.
   static const Duration _cooldown = Duration(hours: 3);
 
-  /// How often the background check runs. Android never goes below 15 min,
-  /// and the free OpenWeatherMap data only changes every couple of hours.
+  /// How often the background check runs (Android never goes below 15 min).
   static const Duration checkEvery = Duration(minutes: 30);
 
   // --- Names ---------------------------------------------------------------
@@ -150,30 +146,18 @@ class RainAlertService {
 
   // --------------------------------------------------------------- the rules
 
-  static String _timeLabel(int unixSeconds) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(unixSeconds * 1000);
-    final hour12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
-    final period = dt.hour >= 12 ? 'PM' : 'AM';
-    return '$hour12 $period';
+  static String _timeLabel(DateTime t) {
+    final hour12 = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    return '$hour12 ${t.hour >= 12 ? 'PM' : 'AM'}';
   }
 
-  static double _pop(Map<String, dynamic> slot) =>
-      ((slot['pop'] ?? 0) as num).toDouble();
-
-  static String _main(Map<String, dynamic> weather) =>
-      weather['weather'][0]['main'].toString();
-
-  /// Looks at the weather now and the next 12 hours and decides what (if
-  /// anything) to warn about. The most serious warning wins.
-  static RainAlert? decide(
-    Map<String, dynamic> current,
-    List<Map<String, dynamic>> forecast,
-  ) {
-    final nowMain = _main(current);
-    final slots = forecast.take(_lookAheadSlots).toList();
+  /// Looks at the weather now and the next 12 hours (hour by hour) and
+  /// decides what (if anything) to warn about. The most serious warning wins.
+  static RainAlert? decide(FarmWeather w) {
+    final hours = w.hours.take(_lookAheadHours).toList();
 
     // 1) Thunderstorm
-    if (nowMain == 'Thunderstorm') {
+    if (w.now.kind == 'Thunderstorm') {
       return const RainAlert(
         type: 'thunder',
         rank: 4,
@@ -182,20 +166,19 @@ class RainAlertService {
             'Stay out of the plantation and do not tap until it passes. Keep tools and latex cups secured.',
       );
     }
-    final storms = slots.where((s) => _main(s) == 'Thunderstorm').toList();
+    final storms = hours.where((h) => h.kind == 'Thunderstorm').toList();
     if (storms.isNotEmpty) {
-      final at = _timeLabel(storms.first['dt'] as int);
       return RainAlert(
         type: 'thunder',
         rank: 4,
-        title: 'Thunderstorm expected around $at',
+        title: 'Thunderstorm expected around ${_timeLabel(storms.first.time)}',
         body:
             'Finish work early, stay out of the plantation while it passes, and do not tap during the storm.',
       );
     }
 
     // 2) Raining now
-    if (nowMain == 'Rain' || nowMain == 'Drizzle') {
+    if (w.now.kind == 'Rain' || w.now.kind == 'Drizzle' || w.now.rainMm >= 0.2) {
       return const RainAlert(
         type: 'now',
         rank: 3,
@@ -206,32 +189,28 @@ class RainAlertService {
     }
 
     // 3) Rain is coming
-    final likely = slots.where((s) => _pop(s) >= _likelyPop).toList();
+    final likely = hours.where((h) => h.rainChance >= _likelyChance).toList();
     if (likely.isNotEmpty) {
-      final slot = likely.first;
-      final at = _timeLabel(slot['dt'] as int);
-      final pct = (_pop(slot) * 100).round();
+      final h = likely.first;
       return RainAlert(
         type: 'likely',
         rank: 2,
-        title: 'Rain is coming around $at',
+        title: 'Rain is coming around ${_timeLabel(h.time)}',
         body:
-            'About a $pct% chance of rain. If today is a tapping day, try to finish collecting before then and have the cup covers ready.',
+            'About a ${h.rainChance}% chance of rain. If today is a tapping day, try to finish collecting before then and have the cup covers ready.',
       );
     }
 
     // 4) Rain is possible
-    final possible = slots.where((s) => _pop(s) >= _possiblePop).toList();
+    final possible = hours.where((h) => h.rainChance >= _possibleChance).toList();
     if (possible.isNotEmpty) {
-      final slot = possible.first;
-      final at = _timeLabel(slot['dt'] as int);
-      final pct = (_pop(slot) * 100).round();
+      final h = possible.first;
       return RainAlert(
         type: 'possible',
         rank: 1,
-        title: 'Rain is possible around $at',
+        title: 'Rain is possible around ${_timeLabel(h.time)}',
         body:
-            'About a $pct% chance of rain. Keep the cup covers and rain gear close by and watch the sky.',
+            'About a ${h.rainChance}% chance of rain. Keep the cup covers and rain gear close by and watch the sky.',
       );
     }
 
@@ -240,43 +219,14 @@ class RainAlertService {
 
   // ----------------------------------------------------------- check + notify
 
-  static Future<Map<String, dynamic>> _fetchWeather() async {
-    final dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 10),
-    ));
-    final params = {
-      'lat': _farmLat,
-      'lon': _farmLon,
-      'appid': _apiKey,
-      'units': 'metric',
-    };
-    final current = await dio.get(
-      'https://api.openweathermap.org/data/2.5/weather',
-      queryParameters: params,
-    );
-    final forecast = await dio.get(
-      'https://api.openweathermap.org/data/2.5/forecast',
-      queryParameters: {...params, 'cnt': 8},
-    );
-    return {
-      'current': Map<String, dynamic>.from(current.data),
-      'forecast': List<Map<String, dynamic>>.from(forecast.data['list']),
-    };
-  }
-
   /// Checks the weather and shows a notification if needed. Returns a short
-  /// plain-language summary (used by the "Check now" button).
+  /// plain-language summary.
   ///
-  /// [force] skips the on/off switch and the repeat limit.
+  /// [force] skips the notification check and the repeat limit.
   static Future<String> checkAndNotify({bool force = false}) async {
     if (!force && !await isEnabled()) return 'Rain alerts are off.';
 
-    final data = await _fetchWeather();
-    final alert = decide(
-      data['current'] as Map<String, dynamic>,
-      data['forecast'] as List<Map<String, dynamic>>,
-    );
+    final alert = decide(await fetchFarmWeather());
 
     final prefs = SharedPreferencesAsync();
 

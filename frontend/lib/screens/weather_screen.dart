@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart';
 import 'package:app_settings/app_settings.dart';
 import '../theme.dart';
+import '../farm_weather.dart';
 import '../rain_alerts.dart';
 import '../tapping_advice.dart';
 
@@ -30,8 +30,8 @@ class _Advice {
 class _WeatherScreenState extends State<WeatherScreen>
     with WidgetsBindingObserver {
   bool _isLoading = true;
-  Map<String, dynamic>? _currentWeather;
-  List<Map<String, dynamic>> _forecast = [];
+  // Weather now + hour by hour (Open-Meteo, the app's one weather source)
+  FarmWeather? _weather;
   DateTime? _lastUpdated;
   Timer? _timer;
   bool _alertsOn = false;
@@ -39,9 +39,6 @@ class _WeatherScreenState extends State<WeatherScreen>
   // calendar). Null while loading or if it could not be downloaded.
   TappingAdvice? _morningAdvice;
 
-  static const double _farmLat = 7.762639;
-  static const double _farmLon = 122.567028;
-  static const String _apiKey = 'b4bf1e412a554e1efae968eda1f8b25e';
 
   @override
   void initState() {
@@ -72,42 +69,10 @@ class _WeatherScreenState extends State<WeatherScreen>
       if (mounted) setState(() => _morningAdvice = a);
     }).catchError((_) {});
     try {
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 10),
-      ));
-
-      // Current weather
-      final currentResponse = await dio.get(
-        'https://api.openweathermap.org/data/2.5/weather',
-        queryParameters: {
-          'lat': _farmLat,
-          'lon': _farmLon,
-          'appid': _apiKey,
-          'units': 'metric',
-        },
-      );
-
-      // Next 24 hours (every 3 hours)
-      final forecastResponse = await dio.get(
-        'https://api.openweathermap.org/data/2.5/forecast',
-        queryParameters: {
-          'lat': _farmLat,
-          'lon': _farmLon,
-          'appid': _apiKey,
-          'units': 'metric',
-          'cnt': 8,
-        },
-      );
-
-      final forecastList = List<Map<String, dynamic>>.from(
-        forecastResponse.data['list'],
-      );
-
+      final w = await fetchFarmWeather();
       if (!mounted) return;
       setState(() {
-        _currentWeather = currentResponse.data;
-        _forecast = forecastList;
+        _weather = w;
         _lastUpdated = DateTime.now();
         _isLoading = false;
       });
@@ -115,7 +80,7 @@ class _WeatherScreenState extends State<WeatherScreen>
       if (!mounted) return;
       setState(() => _isLoading = false);
       // Keep showing the last good reading if we have one
-      if (_currentWeather != null) {
+      if (_weather != null) {
         showNote(context, 'Could not update the weather just now.',
             error: true);
       }
@@ -174,17 +139,9 @@ class _WeatherScreenState extends State<WeatherScreen>
     }
   }
 
-  String _formatTime(int timestamp) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
-    final hour = dt.hour;
-    final period = hour >= 12 ? 'PM' : 'AM';
-    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-    return '$displayHour $period';
-  }
-
-  String _sentence(String text) {
-    if (text.isEmpty) return text;
-    return text[0].toUpperCase() + text.substring(1);
+  String _formatHour(DateTime t) {
+    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    return '$h ${t.hour >= 12 ? 'PM' : 'AM'}';
   }
 
   String _updatedText() {
@@ -268,7 +225,7 @@ class _WeatherScreenState extends State<WeatherScreen>
   }
 
   Widget _buildBody() {
-    if (_currentWeather == null) {
+    if (_weather == null) {
       if (_isLoading) {
         return const Center(child: CircularProgressIndicator(strokeWidth: 2));
       }
@@ -283,9 +240,9 @@ class _WeatherScreenState extends State<WeatherScreen>
       );
     }
 
-    final w = _currentWeather!;
-    final main = w['weather'][0]['main'].toString();
-    final humidity = (w['main']['humidity'] as num).toDouble();
+    final w = _weather!;
+    final main = w.now.kind;
+    final humidity = w.now.humidity;
     // Prefer the advice for the tapping morning; fall back to "right now"
     final morning = _morningAdvice;
     final nowAdvice = _advice(main, humidity);
@@ -406,12 +363,12 @@ class _WeatherScreenState extends State<WeatherScreen>
     );
   }
 
-  Widget _buildNow(Map<String, dynamic> w, String main) {
-    final description = _sentence(w['weather'][0]['description'].toString());
-    final temp = (w['main']['temp'] as num).toStringAsFixed(0);
-    final feels = (w['main']['feels_like'] as num).toStringAsFixed(0);
-    final humidity = (w['main']['humidity'] as num).toStringAsFixed(0);
-    final wind = (w['wind']['speed'] as num).toStringAsFixed(1);
+  Widget _buildNow(FarmWeather w, String main) {
+    final description = w.now.description;
+    final temp = w.now.temp.toStringAsFixed(0);
+    final feels = w.now.feelsLike.toStringAsFixed(0);
+    final humidity = w.now.humidity.toStringAsFixed(0);
+    final wind = w.now.windKmh.toStringAsFixed(0);
 
     Widget cell(String label, String value) => Expanded(
           child: Padding(
@@ -468,7 +425,7 @@ class _WeatherScreenState extends State<WeatherScreen>
               children: [
                 cell('Humidity', '$humidity%'),
                 const VerticalDivider(width: 1),
-                cell('Wind', '$wind m/s'),
+                cell('Wind', '$wind km/h'),
                 const VerticalDivider(width: 1),
                 cell('Feels like', '$feels°'),
               ],
@@ -480,29 +437,37 @@ class _WeatherScreenState extends State<WeatherScreen>
   }
 
   Widget _buildHourly() {
+    // The next 24 hours, every 3 hours (from hourly data)
+    final hours = _weather?.hours ?? const <FarmHour>[];
+    final strip = [
+      for (var i = 0; i < hours.length && i < 24; i += 3) hours[i],
+    ];
     return Panel(
       padding: const EdgeInsets.symmetric(vertical: 16),
       child: SizedBox(
-        height: 92,
+        height: 108,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 18),
-          itemCount: _forecast.length,
+          itemCount: strip.length,
           separatorBuilder: (_, __) => const SizedBox(width: 24),
           itemBuilder: (context, index) {
-            final item = _forecast[index];
-            final main = item['weather'][0]['main'].toString();
-            final temp = (item['main']['temp'] as num).toStringAsFixed(0);
+            final h = strip[index];
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(_formatTime(item['dt'] as int),
+                Text(_formatHour(h.time),
                     style: const TextStyle(
                         fontSize: 11, color: AppColors.inkSoft)),
-                const SizedBox(height: 8),
-                Icon(_icon(main), size: 22, color: AppColors.inkSoft),
-                const SizedBox(height: 8),
-                Text('$temp°', style: AppText.heading),
+                const SizedBox(height: 6),
+                Icon(_icon(h.kind), size: 22, color: AppColors.inkSoft),
+                const SizedBox(height: 6),
+                Text('${h.temp.toStringAsFixed(0)}°', style: AppText.heading),
+                const SizedBox(height: 2),
+                // Chance of rain, shown when it matters
+                Text(h.rainChance >= 30 ? '${h.rainChance}%' : ' ',
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.inkSoft)),
               ],
             );
           },

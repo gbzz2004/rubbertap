@@ -37,6 +37,7 @@ frontend/                Flutter app (Android)
   lib/screens/           dashboard, production_log, gis, forecast, weather
   lib/cycle_plan.dart    cycle calendar + daily plan (must match backend cycle.py)
   lib/tapping_advice.dart advice for the tapping morning (Open-Meteo hourly)
+  lib/farm_weather.dart  weather now + hourly (Weather tab, rain alerts)
   lib/record_store.dart  offline copy of records + records waiting to send
   lib/update_check.dart  "new version available" notice (app_versions table)
   lib/farm_geometry.dart block outlines (PLACEHOLDERS until real corners)
@@ -56,8 +57,9 @@ data/                    Sir Arnel's real records; git-ignored on purpose
 ## Stack
 Flutter + Supabase (data, Realtime, Storage for APKs; row-level security is
 OFF) + Python ML run daily by GitHub Actions (results saved in Supabase; the
-phone only reads them) + Open-Meteo (calendar, plan, tapping advice) +
-OpenWeatherMap (current conditions and rain alerts) + MapLibre (maplibre_gl)
+phone only reads them) + Open-Meteo as the ONE weather source (calendar,
+plan, tapping advice, harvest form, Weather tab, rain alerts; free, no key)
++ MapLibre (maplibre_gl)
 with Esri satellite / OSM tiles and 3D block shapes.
 Release: app ID com.rubbertap.app, signed with the key in
 C:\Users\Administrator\.rubbertap\ (never in the repo); always build with
@@ -102,7 +104,9 @@ and restart it.
   every insert/update/delete of production_logs is copied by a trigger into
   production_logs_history (RLS on, no policies: the app key cannot read or
   change it). Restore queries: backend/sql/production_history.sql.
-- Free OpenWeatherMap data updates about every 2 hours and forecasts come in 3-hour steps.
+- Weather: no service has a station at the farm; all are model estimates on
+  ~10-25 km grids, so tapping advice and rain alerts are general guidance.
+  OpenWeatherMap was removed on 2026-11-10 (its key is no longer in the app).
 - The models run on GitHub Actions every morning (06:00 Manila) and save
   results to Supabase; the app reads them, so it needs no PC. The app's
   refresh button only reloads saved results; a fresh run is started from the

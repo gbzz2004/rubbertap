@@ -100,9 +100,10 @@ TappingAdvice adviceForMorning(List<HourWeather> day, String when) {
 /// Advice for the next tapping morning: this morning until 8 AM, otherwise
 /// tomorrow morning. Throws if the forecast cannot be downloaded.
 Future<TappingAdvice> fetchTappingAdvice({DateTime? now}) async {
+  // Patient: the free service can be slow to wake and farm signal is weak
   final dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 10),
-    receiveTimeout: const Duration(seconds: 15),
+    connectTimeout: const Duration(seconds: 20),
+    receiveTimeout: const Duration(seconds: 40),
   ));
   // The free service sometimes answers slowly: try twice before giving up
   Response<dynamic>? resp;
@@ -117,8 +118,8 @@ Future<TappingAdvice> fetchTappingAdvice({DateTime? now}) async {
             'forecast_days': 2,
           });
     } on DioException {
-      if (attempt >= 1) rethrow;
-      await Future<void>.delayed(const Duration(seconds: 2));
+      if (attempt >= 2) rethrow; // three tries in total
+      await Future<void>.delayed(Duration(seconds: 3 * (attempt + 1)));
     }
   }
   final hourly = Map<String, dynamic>.from(resp.data['hourly'] as Map);
