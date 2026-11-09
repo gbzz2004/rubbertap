@@ -9,6 +9,7 @@ data. Mr. Arnel records one total per block per cycle, so there is nothing
 to learn a per-day weather effect from yet. Once daily yields are recorded
 (the calendar's "Record actual yield"), these weights can be calibrated.
 """
+import time
 from datetime import date, timedelta
 import requests
 
@@ -29,24 +30,13 @@ def _month_end(year: int, month: int) -> date:
     return nxt - timedelta(days=1)
 
 
-def _weigh_day(year: int, month: int) -> date:
-    """Second weigh date of a month: the 30th, or the last day of February."""
-    return date(year, month, min(30, _month_end(year, month).day))
-
-
 def cycle_bounds(d: date):
-    """The farm's cycle containing date d. Sir Arnel weighs each cycle on
-    the 15th and on the 30th (last day of February), so cycles run
-    (day after the previous weigh date) .. 15th, and 16th .. 30th.
-    A 31st starts the next cycle (16 days); February's second cycle is short."""
+    """The farm's cycle containing date d: the calendar halves of the month,
+    1st-15th (weighed on the 15th) and 16th-end of month (weighed on the
+    30th; a 31st belongs to this cycle, February's ends on the 28th/29th)."""
     if d.day <= 15:
-        prev = date(d.year - (d.month == 1), (d.month - 2) % 12 + 1, 1)
-        return _weigh_day(prev.year, prev.month) + timedelta(days=1), date(d.year, d.month, 15)
-    end = _weigh_day(d.year, d.month)
-    if d <= end:
-        return date(d.year, d.month, 16), end
-    nxt = date(d.year + (d.month == 12), d.month % 12 + 1, 15)
-    return end + timedelta(days=1), nxt
+        return date(d.year, d.month, 1), date(d.year, d.month, 15)
+    return date(d.year, d.month, 16), _month_end(d.year, d.month)
 
 # --- ASSUMED weather weights (tune or calibrate later) ---
 WEATHER_BASE_WEIGHT = {"Sunny": 1.0, "Cloudy": 0.95, "Windy": 0.85}
@@ -79,7 +69,18 @@ def fetch_daily_weather(start: date, end: date, lat: float, lon: float,
                         history: bool = False) -> dict:
     """Daily weather from Open-Meteo (free, no key).
     history=False: forecast (3 months back to 16 days ahead).
-    history=True:  historical archive (any past date up to about 5 days ago)."""
+    history=True:  historical archive (any past date up to about 5 days ago).
+    Retries up to 3 times: the free service sometimes answers slowly."""
+    for attempt in range(3):
+        try:
+            return _fetch_weather_once(start, end, lat, lon, history)
+        except requests.RequestException:
+            if attempt == 2:
+                raise
+            time.sleep(5 * (attempt + 1))
+
+
+def _fetch_weather_once(start: date, end: date, lat: float, lon: float, history: bool) -> dict:
     resp = requests.get(
         "https://archive-api.open-meteo.com/v1/archive" if history
         else "https://api.open-meteo.com/v1/forecast",
@@ -91,7 +92,7 @@ def fetch_daily_weather(start: date, end: date, lat: float, lon: float,
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
         },
-        timeout=15,
+        timeout=30,
     )
     resp.raise_for_status()
     daily = resp.json()["daily"]

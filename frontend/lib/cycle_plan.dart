@@ -48,24 +48,16 @@ class PlanException implements Exception {
 /// Day 16 (only in cycles that include a 31st) goes to Block B like day 15.
 String blockForDay(int n) => blockADays.contains(n) ? 'Block A' : 'Block B';
 
-DateTime _weighDay(int year, int month) {
-  final last = DateTime(year, month + 1, 0).day; // last day of the month
-  return DateTime(year, month, last < 30 ? last : 30);
-}
-
-/// The farm's cycle containing [d], as (first day, last day).
-/// Sir Arnel weighs on the 15th and the 30th (last day of February), so
-/// cycles run (day after the previous weigh date) .. 15th, and 16th .. 30th.
+/// The farm's cycle containing [d], as (first day, last day): the calendar
+/// halves of the month, 1st-15th and 16th-end of month (a 31st belongs to
+/// the second half; February's ends on the 28th/29th).
 /// Same rule as cycle_bounds() in backend/app/ml/cycle.py.
 (DateTime, DateTime) cycleBounds(DateTime d) {
-  d = DateTime(d.year, d.month, d.day);
   if (d.day <= 15) {
-    final prevEnd = _weighDay(d.year, d.month - 1); // DateTime handles month 0
-    return (prevEnd.add(const Duration(days: 1)), DateTime(d.year, d.month, 15));
+    return (DateTime(d.year, d.month, 1), DateTime(d.year, d.month, 15));
   }
-  final end = _weighDay(d.year, d.month);
-  if (!d.isAfter(end)) return (DateTime(d.year, d.month, 16), end);
-  return (end.add(const Duration(days: 1)), DateTime(d.year, d.month + 1, 15));
+  // Day 0 of next month = last day of this month
+  return (DateTime(d.year, d.month, 16), DateTime(d.year, d.month + 1, 0));
 }
 
 String _weatherLabel(int code, double windKmh) {

@@ -19,10 +19,14 @@ There is NO login or registration, on purpose.
 - 15-day cycle. Block A is tapped on days 1,3,5,7,9,11,13. Block B on days
   2,4,6,8,10,12,14,15.
 - Mr. Arnel records ONE total per block per 15-day cycle (not per day).
-- He weighs on the 15th and the 30th, so cycles follow the calendar:
-  (day after the previous weigh date)..15th and 16th..30th (a 31st starts a
-  16-day cycle; February's second cycle is short). See cycle_bounds() in
-  backend/app/ml/cycle.py and cycleBounds() in frontend/lib/cycle_plan.dart.
+- He weighs on the 15th and the 30th, so cycles are the calendar halves:
+  1st-15th and 16th-end of month (the 31st joins the second half; February's
+  ends on the 28th/29th). cycle_bounds() in backend/app/ml/cycle.py and
+  cycleBounds() in frontend/lib/cycle_plan.dart must stay identical.
+- The calendar shows history: finished cycles with a recorded total are filled
+  daily by the GitHub job with ESTIMATES (the real total split by real
+  historical weather, status 'recorded'); cycles never recorded show grey;
+  the current half is planned in full from the forecast.
 - Farm coordinates are set in the code (Block A's first corner is the reference point).
 
 ## Folder layout (C:\Users\Administrator\Desktop\rubbertap)

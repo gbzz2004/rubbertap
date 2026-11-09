@@ -1,20 +1,21 @@
 """
 Automatic tapping cycles, run by the daily GitHub job (run_forecasts.py).
 
-Cycles follow Sir Arnel's calendar: he weighs each cycle on the 15th and on
-the 30th (last day of February), so a cycle runs (day after the previous
-weigh date) .. 15th, or 16th .. 30th (see cycle_bounds in app/ml/cycle.py).
+Cycles are the calendar halves of the month: 1st-15th (weighed on the 15th)
+and 16th-end of month (weighed on the 30th). See cycle_bounds in
+app/ml/cycle.py.
 
 Each morning, after the forecast is saved:
-  1. Cycles whose end date has passed are marked 'ended' (tidy-up).
-  2. If no active cycle covers today, the calendar cycle containing today is
-     created and planned. If an older cycle still overlaps it, the new one
-     starts the day after that cycle ends, so plans never overlap.
-     The plan splits each block's ML forecast across its tap days by the
-     Open-Meteo weather forecast (app/ml/cycle.py; the weights there are
-     ASSUMPTIONS, see that file).
-  A running cycle and recorded harvests are never changed.
-The app's "New cycle" button remains as a manual override.
+  1. Old plans that do not match a calendar cycle (made before cycles
+     followed the calendar) are marked 'cancelled'; nothing is deleted.
+  2. Finished cycles are marked 'ended'.
+  3. The calendar cycle containing today is planned IN FULL (1st-15th or
+     16th-end, including days already passed) if it is not planned yet: each
+     block's ML forecast split across its tap days by the Open-Meteo weather
+     (app/ml/cycle.py; the weights there are ASSUMPTIONS, see that file).
+  4. Every finished cycle with a recorded total is filled with per-day
+     estimates from that real total (backfill_recorded_cycles, below).
+The app's "New cycle" button re-plans the current calendar cycle by hand.
 """
 
 import os
@@ -23,6 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from app.ml.cycle import build_daily_plan, cycle_bounds, fetch_daily_weather
 
 MANILA = timezone(timedelta(hours=8))  # the Philippines has no daylight saving
+RECORDED = "recorded"
 
 
 def manila_today() -> date:
@@ -33,54 +35,60 @@ def _d(value) -> date:
     return date.fromisoformat(str(value)[:10])
 
 
+def is_calendar_cycle(cycle: dict) -> bool:
+    """True if the cycle is exactly one calendar half (1st-15th or 16th-end)."""
+    start, end = _d(cycle["start_date"]), _d(cycle["end_date"])
+    return cycle_bounds(start) == (start, end)
+
+
 def plan_window(cycles: list, today: date):
-    """(start, end, anchor) for the cycle to create today, or None if an
-    active cycle already covers today. anchor = the calendar cycle's first
-    day, which fixes which block is tapped on which day."""
-    live = [c for c in cycles if c.get("status") != "cancelled"]
-    if any(c.get("status") == "active" and _d(c["start_date"]) <= today <= _d(c["end_date"])
-           for c in live):
+    """(start, end) of the calendar cycle to plan today, or None if it is
+    already planned (or already recorded)."""
+    start, end = cycle_bounds(today)
+    if any(c.get("status") in ("active", RECORDED)
+           and _d(c["start_date"]) == start and _d(c["end_date"]) == end
+           for c in cycles):
         return None
-    anchor, end = cycle_bounds(today)
-    start = anchor
-    for c in live:  # never overlap an older plan
-        c_end = _d(c["end_date"])
-        if c_end >= start and _d(c["start_date"]) <= end:
-            start = max(start, c_end + timedelta(days=1))
-    if start > today:
-        return None  # a plan already covers today's cycle up to a later day
-    return start, end, anchor
+    return start, end
 
 
 def ensure_current_cycle(db, block_totals: dict, today: date = None, dry_run: bool = False):
-    """Make sure a planned cycle covers today. Returns a short status line."""
+    """Make sure today's calendar cycle is planned. Returns a short status line."""
     today = today or manila_today()
     cycles = db.table("tapping_cycles").select("id, start_date, end_date, status").execute().data
 
-    # 1) Tidy-up: cycles that are over are no longer 'active'
-    finished = [c for c in cycles if c["status"] == "active" and _d(c["end_date"]) < today]
-    if finished and not dry_run:
+    # 1) Old plans that are not calendar cycles: hide them (status only)
+    legacy = [c for c in cycles
+              if c["status"] not in ("cancelled", RECORDED) and not is_calendar_cycle(c)]
+    # 2) Finished calendar cycles are no longer 'active'
+    finished = [c for c in cycles if c["status"] == "active" and is_calendar_cycle(c)
+                and _d(c["end_date"]) < today]
+    if not dry_run:
+        for c in legacy:
+            db.table("tapping_cycles").update({"status": "cancelled"}).eq("id", c["id"]).execute()
+            c["status"] = "cancelled"
         for c in finished:
             db.table("tapping_cycles").update({"status": "ended"}).eq("id", c["id"]).execute()
             c["status"] = "ended"
 
-    # 2) Is a new cycle needed?
+    # 3) Plan today's calendar cycle in full, if not planned yet
     window = plan_window(cycles, today)
+    note = f" ({len(legacy)} old plan(s) {'would be ' if dry_run else ''}cancelled)" if legacy else ""
     if window is None:
-        return "Cycle: one is already running; nothing to do."
-    start, end, anchor = window
+        return "Cycle: today's cycle is already planned." + note
+    start, end = window
 
     weather = fetch_daily_weather(
         start, end,
         float(os.getenv("FARM_LAT", "7.762639")),
         float(os.getenv("FARM_LON", "122.567028")),
     )
-    days = build_daily_plan(start, block_totals, weather, end=end, anchor=anchor)
+    days = build_daily_plan(start, block_totals, weather, end=end, anchor=start)
 
     if dry_run:
         total = {b: round(sum(d["predicted_yield"] for d in days if d["block"] == b), 2)
                  for b in block_totals}
-        return f"Cycle (dry run): would create {start} to {end} (cycle of {anchor}), planned kg {total}"
+        return f"Cycle (dry run): would plan {start} to {end}, kg {total}" + note
 
     cycle = db.table("tapping_cycles").insert({
         "start_date": start.isoformat(),
@@ -99,7 +107,7 @@ def ensure_current_cycle(db, block_totals: dict, today: date = None, dry_run: bo
         }
         for d in days
     ]).execute()
-    return f"Cycle: created {start} to {end} (cycle {cycle['id']})."
+    return f"Cycle: planned {start} to {end} (cycle {cycle['id']})." + note
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +120,6 @@ def ensure_current_cycle(db, block_totals: dict, today: date = None, dry_run: bo
 # daily measurements; the cycle is saved with status 'recorded' so the app can
 # label them that way. The per-day numbers always add up to the recorded total.
 
-RECORDED = "recorded"
 
 
 def recorded_cycle_totals(records: list, today: date) -> dict:

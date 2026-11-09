@@ -185,6 +185,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       }
 
+      // History: every past day from the first recorded cycle on is shown.
+      // Days of cycles with no recorded total are marked "not recorded".
+      if (logList.isNotEmpty) {
+        final first = cycleBounds(DateTime.parse(logList.first['date'])).$1;
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        for (var d = first; d.isBefore(today);
+            d = DateTime(d.year, d.month, d.day + 1)) {
+          if (calData.containsKey(d)) continue;
+          final (cStart, cEnd) = cycleBounds(d);
+          calData[d] = {
+            'block': blockForDay(d.day - cStart.day + 1),
+            'missing': true,
+            'cycle_start': isoDate(cStart),
+            'cycle_end': isoDate(cEnd),
+            'rank': 0,
+          };
+        }
+      }
+
       setState(() => _calendarData = calData);
     } catch (e) {
       if (isOffline(e) && mounted) setState(() => _offline = true);
@@ -202,10 +222,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         surfaceTintColor: Colors.transparent,
         title: const Text('A cycle is already running', style: AppText.heading),
         content: Text(
-          'The current cycle runs until ${until.day} ${_months[until.month - 1]}. '
-          'Re-plan from today to the end of this cycle instead?\n\n'
-          'The rest of the current plan will be replaced. '
-          'Days with a recorded harvest are kept.',
+          'This cycle is already planned until ${until.day} ${_months[until.month - 1]}. '
+          'Make a fresh plan for it with the latest forecast and weather?\n\n'
+          'The old plan is hidden, not deleted.',
           style: AppText.body,
         ),
         actions: [
@@ -216,7 +235,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Start new'),
+            child: const Text('Re-plan'),
           ),
         ],
       ),
@@ -244,39 +263,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       setState(() => _isLoading = true);
 
-      // 1) Make the per-day plan on the phone, from today to the end of the
-      //    farm's calendar cycle (weighed on the 15th and 30th). Each block's
-      //    cycle total comes from the latest saved ML forecast and is split
-      //    across its tap days by the Open-Meteo weather forecast
-      //    (see lib/cycle_plan.dart).
-      final start = DateTime.parse(startStr);
-      final (cycleStart, cycleEnd) = cycleBounds(start);
+      // 1) Plan the whole calendar cycle containing today (1st-15th or
+      //    16th-end), the same as the daily job does. Each block's cycle total
+      //    comes from the latest saved ML forecast and is split across its
+      //    tap days by the Open-Meteo weather (see lib/cycle_plan.dart).
+      final (cycleStart, cycleEnd) = cycleBounds(DateTime.parse(startStr));
       final totals = await latestBlockTotals();
-      final weather = await fetchDailyWeather(start, cycleEnd);
-      final days = buildDailyPlan(start, totals, weather,
-          end: cycleEnd, anchor: cycleStart);
+      final weather = await fetchDailyWeather(cycleStart, cycleEnd);
+      final days = buildDailyPlan(cycleStart, totals, weather, end: cycleEnd);
       final plan = {
-        'start_date': startStr,
+        'start_date': isoDate(cycleStart),
         'end_date': isoDate(cycleEnd),
       };
 
-      // 1b) Only now that the new plan is ready: end the running cycle(s).
-      //     Their days from today on that have no recorded harvest are
-      //     removed; recorded harvests and past days are never touched.
-      final yesterday = isoDate(start.subtract(const Duration(days: 1)));
+      // 1b) Only now that the new plan is ready: hide the old plan(s).
+      //     Status only; nothing is deleted.
       for (final old in running) {
         await supabase
-            .from('daily_predictions')
-            .delete()
-            .eq('cycle_id', old['id'])
-            .gte('tap_date', startStr)
-            .isFilter('actual_yield', null);
-        final startedToday = old['start_date'].toString() == startStr;
-        await supabase.from('tapping_cycles').update({
-          // A cycle started today and replaced today never really ran
-          'status': startedToday ? 'cancelled' : 'ended',
-          if (!startedToday) 'end_date': yesterday,
-        }).eq('id', old['id']);
+            .from('tapping_cycles')
+            .update({'status': 'cancelled'}).eq('id', old['id']);
       }
 
       // 2) Save the cycle
@@ -390,6 +395,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final isPast = day.isBefore(DateTime.now());
     final estimated = data['estimated'] == true && data['cycle_total'] != null;
 
+    // A past day of a cycle whose total was never recorded
+    if (data['missing'] == true) {
+      showModalBottomSheet(
+        context: context,
+        builder: (ctx) => Padding(
+          padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Tag('Not recorded', color: AppColors.inkFaint),
+                  const SizedBox(width: 12),
+                  Text('${day.day} ${_months[day.month - 1]} ${day.year}',
+                      style: AppText.heading),
+                ],
+              ),
+              const SizedBox(height: 16),
+              NoteBar(
+                color: AppColors.inkFaint,
+                background: AppColors.line.withValues(alpha: 0.4),
+                child: Text(
+                  'No harvest total was recorded for the cycle '
+                  '${_prettyDay(data['cycle_start'])} – ${_prettyDay(data['cycle_end'])}, '
+                  'so this day has no estimate. If the total is known, add it '
+                  'in the Production tab and the calendar fills in by itself.',
+                  style: AppText.body,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+
     showModalBottomSheet(
       context: context,
       builder: (ctx) => Padding(
@@ -468,7 +510,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final data = _calendarData[key];
     if (data == null) return null;
 
-    final color = blockColor(data['block'].toString());
+    // A past day whose cycle total was never recorded: grey, no figure
+    final missing = data['missing'] == true;
+    final color =
+        missing ? AppColors.inkFaint : blockColor(data['block'].toString());
     // Filled = backed by a real recorded harvest (a day measured, or a past
     // day estimated from its cycle's recorded total)
     final recorded = data['actual_yield'] != null || data['estimated'] == true;
@@ -711,7 +756,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _LegendDot(color: AppColors.forest, label: 'Block A'),
             _LegendDot(color: AppColors.bronze, label: 'Block B'),
             Text(
-              'Filled = from a recorded harvest · light = forecast · tap a day for details',
+              'Filled = from a recorded harvest · light = forecast · grey = not recorded',
               style: AppText.caption,
             ),
           ],

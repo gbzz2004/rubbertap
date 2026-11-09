@@ -53,21 +53,16 @@ void main() {
     }
   });
 
-  test('cycles follow the 15th / 30th weigh dates (same as Python)', () {
+  test('cycles are the calendar halves 1-15 and 16-end (same as Python)', () {
     (DateTime, DateTime) b(int y, int m, int d) => cycleBounds(DateTime(y, m, d));
-    // Sir Arnel's real weigh dates are cycle ends
-    for (final w in ['2026-05-15', '2026-05-30', '2026-06-30', '2026-09-15',
-        '2026-10-15', '2026-10-30']) {
-      final d = DateTime.parse(w);
-      expect(cycleBounds(d).$2, d, reason: w);
-    }
-    expect(b(2026, 11, 10), (DateTime(2026, 10, 31), DateTime(2026, 11, 15)));
-    expect(b(2026, 11, 20), (DateTime(2026, 11, 16), DateTime(2026, 11, 30)));
-    expect(b(2026, 12, 31), (DateTime(2026, 12, 31), DateTime(2027, 1, 15)));
-    expect(b(2027, 1, 5), (DateTime(2026, 12, 31), DateTime(2027, 1, 15)));
+    expect(b(2026, 6, 3), (DateTime(2026, 6, 1), DateTime(2026, 6, 15)));
+    expect(b(2026, 6, 15), (DateTime(2026, 6, 1), DateTime(2026, 6, 15)));
+    expect(b(2026, 6, 16), (DateTime(2026, 6, 16), DateTime(2026, 6, 30)));
+    expect(b(2026, 10, 30), (DateTime(2026, 10, 16), DateTime(2026, 10, 31)));
+    expect(b(2026, 10, 31), (DateTime(2026, 10, 16), DateTime(2026, 10, 31)));
+    expect(b(2026, 12, 31), (DateTime(2026, 12, 16), DateTime(2026, 12, 31)));
     expect(b(2027, 2, 20), (DateTime(2027, 2, 16), DateTime(2027, 2, 28)));
-    expect(b(2027, 3, 3), (DateTime(2027, 3, 1), DateTime(2027, 3, 15)));
-    expect(b(2028, 2, 20), (DateTime(2028, 2, 16), DateTime(2028, 2, 29)));
+    expect(b(2028, 2, 29), (DateTime(2028, 2, 16), DateTime(2028, 2, 29)));
 
     // Three years: every day in exactly one cycle, no gaps, 13-16 days long
     var d = DateTime(2026, 1, 1);
@@ -75,14 +70,11 @@ void main() {
     while (d.isBefore(DateTime(2029, 1, 1))) {
       final (s, e) = cycleBounds(d);
       expect(!d.isBefore(s) && !d.isAfter(e), true, reason: '$d');
-      final len = DateTime.utc(e.year, e.month, e.day)
-              .difference(DateTime.utc(s.year, s.month, s.day))
-              .inDays +
-          1;
+      expect(s.day == 1 || s.day == 16, true, reason: '$s');
+      final len = e.day - s.day + 1;
       expect(len >= 13 && len <= 16, true, reason: '$s..$e');
       if (prev != null && (s, e) != prev) {
-        expect(DateTime(s.year, s.month, s.day),
-            DateTime(prev.$2.year, prev.$2.month, prev.$2.day + 1),
+        expect(s, DateTime(prev.$2.year, prev.$2.month, prev.$2.day + 1),
             reason: 'gap before $s');
       }
       prev = (s, e);
@@ -90,25 +82,23 @@ void main() {
     }
   });
 
-  test('partial cycle is scaled like the Python version', () {
-    final start = DateTime(2026, 10, 31);
+  test('16-day cycle keeps each block total', () {
+    final start = DateTime(2026, 10, 16);
     final weather = {
       for (var i = 0; i < 16; i++)
-        isoDate(DateTime(2026, 10, 31 + i)): {
+        isoDate(DateTime(2026, 10, 16 + i)): {
           'code': 0.0, 'rain': 0.0, 'temp': 30.0, 'wind': 5.0,
         },
     };
-    final full = buildDailyPlan(start, {'Block A': 60, 'Block B': 45}, weather,
-        end: DateTime(2026, 11, 15));
-    expect(full.where((x) => x['block'] == 'Block A').length, 7);
-    expect(full.where((x) => x['block'] == 'Block B').length, 9);
-    final part = buildDailyPlan(
-        DateTime(2026, 11, 14), {'Block A': 60, 'Block B': 45}, weather,
-        end: DateTime(2026, 11, 15), anchor: start);
-    expect(part.map((x) => x['day']).toList(), [15, 16]);
-    expect(part.map((x) => x['block']).toSet(), {'Block B'});
-    expect(part.fold<double>(0, (s, x) => s + (x['predicted_yield'] as double)),
-        closeTo(10.0, 0.05));
+    final plan = buildDailyPlan(start, {'Block A': 60, 'Block B': 45}, weather,
+        end: DateTime(2026, 10, 31));
+    expect(plan.length, 16);
+    expect(plan.where((x) => x['block'] == 'Block A').length, 7);
+    double sum(String b) => plan
+        .where((x) => x['block'] == b)
+        .fold(0.0, (s, x) => s + (x['predicted_yield'] as double));
+    expect(sum('Block A'), closeTo(60.0, 0.05));
+    expect(sum('Block B'), closeTo(45.0, 0.05));
   });
 
   test('daily amounts add up to each block\'s forecast total', () {
