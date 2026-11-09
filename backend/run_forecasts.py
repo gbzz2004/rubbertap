@@ -22,10 +22,12 @@ import argparse
 import os
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app.ml.auto_cycle import ensure_current_cycle, manila_today
 from app.ml.models import run_all_models
 
 BLOCKS = ("Block A", "Block B")
@@ -37,7 +39,9 @@ def main():
     parser.add_argument("--trigger", default="manual",
                         help="why this run started: schedule, button, new_record, manual")
     parser.add_argument("--dry-run", action="store_true", help="run the models but write nothing")
+    parser.add_argument("--today", help="pretend today is YYYY-MM-DD (testing the cycle step)")
     args = parser.parse_args()
+    today = date.fromisoformat(args.today) if args.today else manila_today()
 
     load_dotenv(Path(__file__).with_name(".env"))
     url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
@@ -72,6 +76,7 @@ def main():
         if not results:
             raise RuntimeError("No block has enough records to forecast")
         if args.dry_run:
+            print(ensure_current_cycle(db, _best_totals(results), today, dry_run=True))
             print("Dry run: nothing written.")
             return
 
@@ -97,6 +102,22 @@ def main():
             db.table("forecast_runs").update(
                 {"status": "failed", "error": str(e)[:2000]}).eq("id", run_id).execute()
         raise
+
+    # Start and plan the next 15-day cycle when the last one has ended.
+    # The forecast above is already saved even if this step fails.
+    if len(results) == len(BLOCKS):
+        print(ensure_current_cycle(db, _best_totals(results), today))
+    else:
+        print("Cycle: skipped, not every block has a forecast yet.")
+
+
+def _best_totals(results: dict) -> dict:
+    """Each block's next-cycle forecast from its best model."""
+    totals = {}
+    for block, res in results.items():
+        best = next(res[k] for k in MODEL_KEYS if res[k]["model"] == res["best_model"])
+        totals[block] = max(0.0, float(best["forecast_kg"]))
+    return totals
 
 
 if __name__ == "__main__":
