@@ -1,0 +1,171 @@
+// Per-day yield plan for one 15-day tapping cycle, made on the phone.
+//
+// Dart version of backend/app/ml/cycle.py, so "New cycle" works without the
+// PC. The ML models (run on GitHub, saved in forecast_runs) give each block's
+// cycle TOTAL; this file splits that total across the block's tap days using
+// each day's weather forecast from Open-Meteo (free, no key), so the daily
+// numbers always add up to the ML forecast.
+//
+// IMPORTANT: the weather weights below are ASSUMED values, not learned from
+// data. Mr. Arnel records one total per block per cycle, so there is nothing
+// to learn a per-day weather effect from yet. Keep them identical to cycle.py.
+
+import 'package:dio/dio.dart';
+import 'main.dart';
+
+const int cycleLength = 15;
+const Set<int> blockADays = {1, 3, 5, 7, 9, 11, 13}; // 7 tap days
+const Set<int> blockBDays = {2, 4, 6, 8, 10, 12, 14, 15}; // 8 tap days
+
+// --- ASSUMED weather weights (same as backend/app/ml/cycle.py) ---
+const Map<String, double> _baseWeight = {
+  'Sunny': 1.0,
+  'Cloudy': 0.95,
+  'Windy': 0.85,
+};
+const double _rainStartWeight = 0.85; // rainy day with ~0 mm of rain
+const double _rainPenaltyPerMm = 0.02; // each mm lowers the weight this much
+const double _rainMinWeight = 0.40; // heavy rain never goes below this
+const double _windyKmh = 30.0;
+
+// WMO weather codes (Open-Meteo) that mean drizzle / rain / showers / storm
+const Set<int> _rainCodes = {
+  51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99,
+};
+
+const double farmLat = 7.762639;
+const double farmLon = 122.567028;
+
+/// Something the user should be told in plain words.
+class PlanException implements Exception {
+  final String message;
+  const PlanException(this.message);
+  @override
+  String toString() => message;
+}
+
+String _weatherLabel(int code, double windKmh) {
+  if (_rainCodes.contains(code)) return 'Rainy';
+  if (windKmh >= _windyKmh) return 'Windy';
+  if (code == 0 || code == 1) return 'Sunny';
+  return 'Cloudy';
+}
+
+double _weatherWeight(String label, double rainMm) {
+  if (label == 'Rainy') {
+    final w = _rainStartWeight - _rainPenaltyPerMm * rainMm;
+    return w < _rainMinWeight ? _rainMinWeight : w;
+  }
+  return _baseWeight[label]!;
+}
+
+String isoDate(DateTime d) =>
+    '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+/// Each block's forecast cycle total (best model) from the newest finished run.
+Future<Map<String, double>> latestBlockTotals() async {
+  final runs = await supabase
+      .from('forecast_runs')
+      .select('results')
+      .eq('status', 'done')
+      .order('id', ascending: false)
+      .limit(1);
+  final list = List<Map<String, dynamic>>.from(runs);
+  if (list.isEmpty) {
+    throw const PlanException(
+        'No forecast has been made yet. It is updated every morning at 6:00.');
+  }
+  final results = Map<String, dynamic>.from(list.first['results'] as Map);
+  final totals = <String, double>{};
+  for (final block in ['Block A', 'Block B']) {
+    final r = results[block];
+    if (r == null) {
+      throw PlanException(
+          'There are not enough saved harvest records for $block yet to plan a cycle.');
+    }
+    final res = Map<String, dynamic>.from(r as Map);
+    final bestName = res['best_model'];
+    final best = res.values.whereType<Map>().firstWhere(
+          (m) => m['model'] == bestName,
+          orElse: () => throw PlanException('The saved forecast for $block is incomplete.'),
+        );
+    final kg = (best['forecast_kg'] as num).toDouble();
+    totals[block] = kg < 0 ? 0 : kg;
+  }
+  return totals;
+}
+
+/// Daily weather from Open-Meteo for [start] .. [start]+14 days.
+Future<Map<String, Map<String, double>>> fetchDailyWeather(
+    DateTime start) async {
+  final end = start.add(const Duration(days: cycleLength - 1));
+  try {
+    final dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 15),
+    ));
+    final resp = await dio.get(
+      'https://api.open-meteo.com/v1/forecast',
+      queryParameters: {
+        'latitude': farmLat,
+        'longitude': farmLon,
+        'daily':
+            'weather_code,precipitation_sum,temperature_2m_max,wind_speed_10m_max',
+        'timezone': 'Asia/Manila',
+        'start_date': isoDate(start),
+        'end_date': isoDate(end),
+      },
+    );
+    final daily = Map<String, dynamic>.from(resp.data['daily'] as Map);
+    final times = List<String>.from(daily['time'] as List);
+    double at(String key, int i) => ((daily[key] as List)[i] as num?)?.toDouble() ?? 0.0;
+    return {
+      for (var i = 0; i < times.length; i++)
+        times[i]: {
+          'code': at('weather_code', i),
+          'rain': at('precipitation_sum', i),
+          'temp': at('temperature_2m_max', i),
+          'wind': at('wind_speed_10m_max', i),
+        },
+    };
+  } on DioException {
+    throw const PlanException(
+        'Could not get the weather forecast. Please check the internet connection and try again.');
+  }
+}
+
+/// Split each block's cycle total across its tap days by weather.
+List<Map<String, dynamic>> buildDailyPlan(DateTime start,
+    Map<String, double> blockTotals, Map<String, Map<String, double>> weather) {
+  final days = <Map<String, dynamic>>[];
+  for (var n = 1; n <= cycleLength; n++) {
+    final d = start.add(Duration(days: n - 1));
+    final w = weather[isoDate(d)];
+    if (w == null) {
+      throw PlanException('No weather forecast for ${isoDate(d)}.');
+    }
+    final label = _weatherLabel(w['code']!.round(), w['wind']!);
+    days.add({
+      'day': n,
+      'date': isoDate(d),
+      'block': blockADays.contains(n) ? 'Block A' : 'Block B',
+      'weather': label,
+      'temperature': w['temp'],
+      'rainfall': double.parse(w['rain']!.toStringAsFixed(2)),
+      '_weight': _weatherWeight(label, w['rain']!),
+    });
+  }
+  blockTotals.forEach((block, total) {
+    final blockDays = days.where((x) => x['block'] == block).toList();
+    final weightSum =
+        blockDays.fold<double>(0, (s, x) => s + (x['_weight'] as double));
+    for (final x in blockDays) {
+      x['predicted_yield'] = double.parse(
+          (total * (x['_weight'] as double) / weightSum).toStringAsFixed(2));
+    }
+  });
+  for (final x in days) {
+    x.remove('_weight');
+  }
+  return days;
+}

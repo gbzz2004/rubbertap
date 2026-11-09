@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart';
 import 'package:table_calendar/table_calendar.dart';
+import '../cycle_plan.dart';
 import '../main.dart';
 import '../theme.dart';
 
@@ -22,11 +22,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
   Map<DateTime, Map<String, dynamic>> _calendarData = {};
-
-  // 10.0.2.2 is how the Android emulator reaches your PC's localhost.
-  // Change this to the Render URL after deployment.
-  static const String _apiBaseUrl =
-      String.fromEnvironment('API_URL', defaultValue: 'http://10.0.2.2:8000');
 
   // Check if a date is a tapping day within any cycle
   bool _isTappingDay(DateTime date) {
@@ -83,15 +78,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           .where((l) => (l['yield_kg'] as num) < avgYield * 0.7)
           .length;
 
-      final forecasts = await supabase
-          .from('forecast_results')
-          .select()
-          .order('created_at', ascending: false)
-          .limit(1);
-      final forecastList = List<Map<String, dynamic>>.from(forecasts);
-      final latestForecast = forecastList.isNotEmpty
-          ? (forecastList.first['forecast_kg'] as num).toDouble()
-          : 0.0;
+      // Next cycle for the whole farm: both blocks' forecasts added together
+      double latestForecast = 0;
+      try {
+        final totals = await latestBlockTotals();
+        latestForecast = totals.values.fold(0.0, (a, b) => a + b);
+      } catch (_) {
+        // No saved forecast yet; the card shows 0
+      }
 
       setState(() {
         _totalBlocks = blocks.length;
@@ -169,19 +163,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       setState(() => _isLoading = true);
 
-      // 1) Ask the ML backend for the per-day plan.
-      //    It forecasts each block's 15-day total with the best model, then
-      //    splits that total across tap days using each day's weather.
-      //    Two blocks x five models, so this can take up to a minute.
-      final dio = Dio(BaseOptions(
-        baseUrl: _apiBaseUrl,
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 180),
-      ));
-      final response =
-          await dio.post('/cycle/plan', data: {'start_date': startStr});
-      final plan = Map<String, dynamic>.from(response.data);
-      final days = List<Map<String, dynamic>>.from(plan['days']);
+      // 1) Make the per-day plan on the phone: each block's 15-day total from
+      //    the latest saved ML forecast, split across its tap days by the
+      //    Open-Meteo weather forecast (see lib/cycle_plan.dart).
+      final start = DateTime.parse(startStr);
+      final totals = await latestBlockTotals();
+      final weather = await fetchDailyWeather(start);
+      final days = buildDailyPlan(start, totals, weather);
+      final plan = {
+        'start_date': startStr,
+        'end_date':
+            isoDate(start.add(const Duration(days: cycleLength - 1))),
+      };
 
       // 2) Save the cycle
       final cycleResponse = await supabase
@@ -213,20 +206,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('New 15-day cycle started with ML predictions!'),
+            content: Text('New 15-day cycle planned from the latest forecast.'),
             backgroundColor: AppColors.good,
           ),
         );
       }
-    } on DioException catch (e) {
+    } on PlanException catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      final data = e.response?.data;
-      final message = (data is Map && data['detail'] != null)
-          ? data['detail'].toString()
-          : 'Cannot reach the ML server. Is uvicorn running?';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message), backgroundColor: AppColors.alert),
+        SnackBar(content: Text(e.message), backgroundColor: AppColors.alert),
       );
     } catch (e) {
       if (!mounted) return;
@@ -548,13 +537,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   child: Padding(
                     padding: const EdgeInsets.all(18),
                     child: Figure(
-                      label: 'Latest forecast',
+                      label: 'Next cycle forecast',
                       value: hasForecast
                           ? '${_lastForecast.toStringAsFixed(1)} kg'
                           : '—',
                       note: hasForecast
-                          ? 'for a 15-day cycle'
-                          : 'start a cycle below',
+                          ? 'both blocks, 15 days'
+                          : 'updated every morning',
                     ),
                   ),
                 ),
