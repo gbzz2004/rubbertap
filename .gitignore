@@ -1,0 +1,22 @@
+# Secrets: never commit
+.env
+*.env
+.env.*
+!.env.example
+
+# Python
+backend/venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Evaluation output (regenerate with: python evaluate.py)
+backend/results/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Flutter rules live in frontend/.gitignore and frontend/android/.gitignore

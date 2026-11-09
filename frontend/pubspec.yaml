@@ -1,0 +1,30 @@
+name: frontend
+description: RubberTap - Rubber Farm Yield Forecasting App
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '^3.13.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  go_router: ^14.0.0
+  dio: ^5.4.0
+  flutter_map: ^7.0.0
+  latlong2: ^0.9.0
+  fl_chart: ^0.68.0
+  cupertino_icons: ^1.0.6
+  supabase_flutter: ^2.0.0
+  table_calendar: ^3.1.0
+  flutter_local_notifications: ^22.3.3
+  workmanager: ^0.10.10
+  shared_preferences: ^2.5.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
