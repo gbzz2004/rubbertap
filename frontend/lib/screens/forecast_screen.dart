@@ -412,7 +412,24 @@ class _ForecastScreenState extends State<ForecastScreen> {
         .map((m) => _num(m['mae']))
         .fold<double>(0, (a, b) => a > b ? a : b);
 
+    // The backend says when the records it learned from are sample data
+    final evaluation = d.api['evaluation'];
+    final sampleData =
+        evaluation is Map && (evaluation['synthetic_rows'] ?? 0) > 0;
+
     return [
+      if (sampleData) ...[
+        const NoteBar(
+          color: AppColors.alert,
+          background: AppColors.alertSoft,
+          child: Text(
+            'Sample data: this forecast was made from practice records, not '
+            'the farm\'s real harvests. Do not rely on these numbers yet.',
+            style: AppText.body,
+          ),
+        ),
+        const SizedBox(height: 16),
+      ],
       // Main forecast
       Panel(
         padding: const EdgeInsets.all(20),

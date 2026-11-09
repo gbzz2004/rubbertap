@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import '../theme.dart';
 import '../rain_alerts.dart';
+import '../record_store.dart';
 
 class WeatherScreen extends StatefulWidget {
   const WeatherScreen({super.key});
@@ -149,7 +150,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
       }
     } catch (e) {
       if (mounted) {
-        showNote(context, 'Could not change rain alerts: $e', error: true);
+        showNote(context, 'Could not change rain alerts. ${plainError(e)}', error: true);
       }
     } finally {
       if (mounted) setState(() => _alertsBusy = false);
@@ -161,7 +162,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
       await RainAlertService.sendTest();
       if (mounted) showNote(context, 'Test alert sent. Check your notifications.');
     } catch (e) {
-      if (mounted) showNote(context, 'Could not send the test: $e', error: true);
+      if (mounted) showNote(context, 'Could not send the test. ${plainError(e)}', error: true);
     }
   }
 
@@ -172,7 +173,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
       if (mounted) showNote(context, summary);
     } catch (e) {
       if (mounted) {
-        showNote(context, 'Could not check the weather: $e', error: true);
+        showNote(context, 'Could not check the weather. ${plainError(e)}', error: true);
       }
     } finally {
       if (mounted) setState(() => _alertsBusy = false);

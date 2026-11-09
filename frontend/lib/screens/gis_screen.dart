@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import '../farm_geometry.dart';
 import '../main.dart';
+import '../record_store.dart';
 import '../theme.dart';
 
 // Free map sources (no key, no billing). Esri imagery must be credited.
@@ -97,7 +98,7 @@ class _GisScreenState extends State<GisScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      showNote(context, 'Could not load the map data: $e', error: true);
+      showNote(context, 'Could not load the map data. ${plainError(e)}', error: true);
     }
   }
 
@@ -336,7 +337,7 @@ class _GisScreenState extends State<GisScreen> {
       _styleReady = true;
     } catch (e) {
       if (mounted) {
-        showNote(context, 'Could not draw the blocks: $e', error: true);
+        showNote(context, 'Could not draw the blocks. ${plainError(e)}', error: true);
       }
       return;
     }

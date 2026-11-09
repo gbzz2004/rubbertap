@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../cycle_plan.dart';
 import '../main.dart';
+import '../record_store.dart';
 import '../theme.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -44,13 +45,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _fetchAll();
   }
 
+  // True when the last load failed for lack of internet
+  bool _offline = false;
+
   Future<void> _fetchAll() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _offline = false;
+    });
     await Future.wait([
       _fetchDashboardData(),
       _fetchCalendarData(),
     ]);
-    setState(() => _isLoading = false);
+    if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> _fetchDashboardData() async {
@@ -94,7 +101,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _anomalies = anomalyCount;
       });
     } catch (e) {
-      // ignore
+      if (isOffline(e) && mounted) setState(() => _offline = true);
     }
   }
 
@@ -153,7 +160,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       setState(() => _calendarData = calData);
     } catch (e) {
-      // ignore
+      if (isOffline(e) && mounted) setState(() => _offline = true);
     }
   }
 
@@ -287,7 +294,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (!mounted) return;
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.alert),
+        SnackBar(content: Text(plainError(e)), backgroundColor: AppColors.alert),
       );
     }
   }
@@ -378,97 +385,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 label: 'Recorded harvest',
                 value: '${_kg(data['actual_yield'])} kg',
               ),
-            if (!hasActual && isPast) ...[
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _recordActualYield(normalized, data);
-                  },
-                  child: const Text('Record this harvest'),
+            if (isPast) ...[
+              const SizedBox(height: 16),
+              // One place to record harvests: the Production tab's cycle
+              // totals are what the forecast learns from
+              const NoteBar(
+                color: AppColors.forest,
+                background: AppColors.forestSoft,
+                child: Text(
+                  'Harvests are recorded once per cycle: each block\'s '
+                  '15-day total, in the Production tab. That is what the '
+                  'forecast learns from.',
+                  style: AppText.body,
                 ),
               ),
             ],
           ],
         ),
-      ),
-    );
-  }
-
-  void _recordActualYield(DateTime date, Map<String, dynamic> data) {
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Record harvest', style: AppText.heading),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${data['block']} · ${date.day} ${_months[date.month - 1]} ${date.year}',
-              style: AppText.caption,
-            ),
-            if (data['predicted_yield'] != null) ...[
-              const SizedBox(height: 2),
-              Text(
-                'Expected: ${_kg(data['predicted_yield'])} kg',
-                style: AppText.caption,
-              ),
-            ],
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: fieldDecoration('Harvest (kg)'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel',
-                style: TextStyle(color: AppColors.inkSoft)),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final yieldKg = double.tryParse(controller.text);
-              if (yieldKg == null) return;
-              Navigator.pop(dialogContext);
-              try {
-                final dateStr = isoDate(date);
-                // .select() returns the rows that were really changed, so
-                // the app never claims a save that did not happen
-                final saved = await supabase
-                    .from('daily_predictions')
-                    .update({'actual_yield': yieldKg})
-                    .eq('tap_date', dateStr)
-                    .select('id');
-                await _fetchCalendarData();
-                if (!mounted) return;
-                if (saved.isEmpty) {
-                  showNote(
-                      context,
-                      'Nothing was saved: this day has no plan. '
-                      'Record the cycle total in the Production tab instead.',
-                      error: true);
-                } else {
-                  showNote(context, 'Harvest saved.');
-                }
-              } catch (e) {
-                if (mounted) showNote(context, 'Error: $e', error: true);
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
   }
@@ -587,6 +520,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         SectionLabel(_dateLine()),
         const SizedBox(height: 6),
         Text('${_greeting()}, Arnel', style: AppText.display),
+        if (_offline) ...[
+          const SizedBox(height: 14),
+          const NoteBar(
+            color: AppColors.caution,
+            background: AppColors.bronzeSoft,
+            child: Text(
+              'No internet. The numbers below may be missing or out of date. '
+              'Pull the refresh button when there is signal.',
+              style: AppText.body,
+            ),
+          ),
+        ],
       ],
     );
   }

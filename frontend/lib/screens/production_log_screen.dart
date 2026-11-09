@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import '../main.dart';
+import '../record_store.dart';
 import '../theme.dart';
 
 class ProductionLogScreen extends StatefulWidget {
@@ -17,6 +18,19 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
   bool _isLoading = true;
   bool _isFetchingWeather = false;
   List<Map<String, dynamic>> _logs = [];
+  // Offline support (see lib/record_store.dart)
+  bool _offline = false;
+  DateTime? _cachedAt;
+  List<Map<String, dynamic>> _pending = [];
+
+  static const List<String> _monthNames = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  static String _prettyDate(DateTime d) =>
+      '${d.day} ${_monthNames[d.month - 1]} ${d.year}';
+  static String _isoDate(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   static const List<String> _blocks = ['All', 'Block A', 'Block B'];
   static const List<String> _sortOptions = [
@@ -104,25 +118,52 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
 
   Future<void> _fetchLogs() async {
     setState(() => _isLoading = true);
+    // First send any records that were saved on the phone without internet
+    final sent = await RecordStore.syncPending();
     try {
       final response = await supabase
           .from('production_logs')
           .select()
           .order('date', ascending: false);
+      final logs = List<Map<String, dynamic>>.from(response);
+      await RecordStore.saveCache(logs);
+      final pending = await RecordStore.pending();
       if (!mounted) return;
       setState(() {
-        _logs = List<Map<String, dynamic>>.from(response);
+        _logs = logs;
+        _pending = pending;
+        _offline = false;
+        _cachedAt = null;
         _isLoading = false;
       });
+      if (sent > 0) {
+        showNote(context,
+            sent == 1 ? '1 waiting record was sent.' : '$sent waiting records were sent.');
+      }
     } catch (e) {
+      // No internet: show the copy kept on the phone instead of "no records"
+      final (cached, at) = await RecordStore.loadCache();
+      final pending = await RecordStore.pending();
       if (!mounted) return;
-      setState(() => _isLoading = false);
-      showNote(context, 'Could not load records: $e', error: true);
+      setState(() {
+        _logs = cached;
+        _pending = pending;
+        _offline = isOffline(e);
+        _cachedAt = at;
+        _isLoading = false;
+      });
+      if (!isOffline(e)) showNote(context, plainError(e), error: true);
     }
   }
 
+  /// Saved records plus the ones still waiting on the phone (marked).
+  List<Map<String, dynamic>> get _allLogs => [
+        ..._pending.map((p) => {...p, '_pending': true}),
+        ..._logs,
+      ];
+
   List<Map<String, dynamic>> get _filteredLogs {
-    List<Map<String, dynamic>> result = List.from(_logs);
+    List<Map<String, dynamic>> result = List.from(_allLogs);
     if (_selectedBlock != 'All') {
       result = result.where((l) => l['block'] == _selectedBlock).toList();
     }
@@ -159,7 +200,20 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
       await _fetchLogs();
       if (mounted) showNote(context, 'Record saved.');
     } catch (e) {
-      if (mounted) showNote(context, 'Error: $e', error: true);
+      if (isOffline(e)) {
+        // Keep it on the phone; it is sent the next time the app connects
+        await RecordStore.addPending(data);
+        final pending = await RecordStore.pending();
+        if (!mounted) return;
+        setState(() {
+          _pending = pending;
+          _offline = true;
+        });
+        showNote(context,
+            'No internet. The record is saved on this phone and will be sent automatically.');
+      } else if (mounted) {
+        showNote(context, plainError(e), error: true);
+      }
     }
   }
 
@@ -169,7 +223,14 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
       await _fetchLogs();
       if (mounted) showNote(context, 'Changes saved.');
     } catch (e) {
-      if (mounted) showNote(context, 'Error: $e', error: true);
+      if (mounted) {
+        showNote(
+            context,
+            isOffline(e)
+                ? 'No internet. Changing a record needs a connection; nothing was changed.'
+                : plainError(e),
+            error: true);
+      }
     }
   }
 
@@ -182,7 +243,7 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Delete this record?', style: AppText.heading),
         content: const Text(
-          'This cannot be undone.',
+          'It will be removed from the records and the forecast.',
           style: AppText.body,
         ),
         actions: [
@@ -199,7 +260,14 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                 await _fetchLogs();
                 if (mounted) showNote(context, 'Record deleted.');
               } catch (e) {
-                if (mounted) showNote(context, 'Error: $e', error: true);
+                if (mounted) {
+                  showNote(
+                      context,
+                      isOffline(e)
+                          ? 'No internet. Deleting needs a connection; nothing was deleted.'
+                          : plainError(e),
+                      error: true);
+                }
               }
             },
             child: const Text('Delete',
@@ -208,6 +276,79 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
         ],
       ),
     );
+  }
+
+  // --------------------------------------------------------- sanity checks
+
+  /// Plain-language warnings for a record that looks like a typo or a
+  /// repeat. Empty list = nothing unusual.
+  List<String> _sanityWarnings(
+      String block, double kg, DateTime date, dynamic editId) {
+    final warnings = <String>[];
+    final others = _allLogs
+        .where((l) => l['block'] == block && (editId == null || l['id'] != editId))
+        .toList();
+
+    // 1) Far from this block's usual cycle total (needs some history)
+    if (others.length >= 3) {
+      final avg = others.fold<double>(
+              0, (s, l) => s + (l['yield_kg'] as num).toDouble()) /
+          others.length;
+      if (kg > avg * 2) {
+        warnings.add('${kg.toStringAsFixed(1)} kg is much MORE than usual for '
+            '$block (usually about ${avg.toStringAsFixed(1)} kg per cycle). '
+            'Check for a typing mistake, e.g. 448 instead of 44.8.');
+      } else if (kg < avg / 3) {
+        warnings.add('${kg.toStringAsFixed(1)} kg is much LESS than usual for '
+            '$block (usually about ${avg.toStringAsFixed(1)} kg per cycle). '
+            'Is this one day instead of the whole cycle?');
+      }
+    }
+
+    // 2) Another record for this block within the same 15-day cycle
+    for (final l in others) {
+      final d = DateTime.tryParse(l['date'].toString());
+      if (d != null && d.difference(date).inDays.abs() < 10) {
+        warnings.add('$block already has a record on ${_prettyDate(d)} '
+            '(${(l['yield_kg'] as num).toStringAsFixed(1)} kg), in the same '
+            '15-day cycle. Each block needs only one total per cycle.');
+        break;
+      }
+    }
+    return warnings;
+  }
+
+  Future<bool> _confirmUnusual(BuildContext ctx, List<String> warnings) async {
+    final ok = await showDialog<bool>(
+      context: ctx,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        surfaceTintColor: Colors.transparent,
+        title: const Text('Please check this record', style: AppText.heading),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final w in warnings) ...[
+              Text(w, style: AppText.body),
+              const SizedBox(height: 10),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Go back and fix',
+                style: TextStyle(color: AppColors.inkSoft)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Save anyway'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
   }
 
   // ------------------------------------------------------- add / edit sheet
@@ -230,10 +371,12 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
         TextEditingController(text: existing?['yield_kg']?.toString() ?? '');
     final notesController =
         TextEditingController(text: existing?['notes']?.toString() ?? '');
-    final dateController = TextEditingController(
-      text: existing?['date']?.toString() ??
-          DateTime.now().toIso8601String().substring(0, 10),
-    );
+    // The date is kept as a DateTime and shown as "9 Nov 2026"
+    DateTime pickedDate =
+        DateTime.tryParse(existing?['date']?.toString() ?? '') ??
+            DateTime.now();
+    final dateController =
+        TextEditingController(text: _prettyDate(pickedDate));
     String block = existing?['block']?.toString() ?? 'Block A';
     String weather = existing?['weather']?.toString() ?? detectedWeather;
     final formKey = GlobalKey<FormState>();
@@ -257,33 +400,35 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(isEdit ? 'Edit record' : 'New harvest record',
+                  Text(isEdit ? 'Edit cycle total' : 'Cycle harvest total',
                       style: AppText.title),
-                  const SizedBox(height: 4),
-                  Text(
-                    isEdit
-                        ? 'Change the details, then save.'
-                        : 'Write down what you collected.',
-                    style: AppText.caption,
+                  const SizedBox(height: 6),
+                  const NoteBar(
+                    color: AppColors.forest,
+                    background: AppColors.forestSoft,
+                    child: Text(
+                      'Enter ONE block\'s total for the whole 15-day cycle, '
+                      'not one day\'s harvest. Record Block A and Block B '
+                      'separately.',
+                      style: AppText.body,
+                    ),
                   ),
                   const SizedBox(height: 20),
                   TextFormField(
                     controller: dateController,
                     readOnly: true,
-                    decoration: fieldDecoration('Date',
+                    decoration: fieldDecoration('Date weighed',
                         icon: Icons.calendar_today_outlined),
                     onTap: () async {
                       final picked = await showDatePicker(
                         context: sheetContext,
-                        initialDate:
-                            DateTime.tryParse(dateController.text) ??
-                                DateTime.now(),
+                        initialDate: pickedDate,
                         firstDate: DateTime(2020),
                         lastDate: DateTime.now(),
                       );
                       if (picked != null) {
-                        dateController.text =
-                            picked.toIso8601String().substring(0, 10);
+                        pickedDate = picked;
+                        dateController.text = _prettyDate(picked);
                       }
                     },
                     validator: (v) =>
@@ -312,7 +457,7 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                     controller: yieldController,
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
-                    decoration: fieldDecoration('Harvest (kg)',
+                    decoration: fieldDecoration('Total for the cycle (kg)',
                         icon: Icons.scale_outlined),
                     validator: (v) {
                       if (v == null || v.isEmpty) return 'Please enter the kg';
@@ -357,11 +502,21 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                     child: ElevatedButton(
                       onPressed: () async {
                         if (!formKey.currentState!.validate()) return;
+                        final kg = double.parse(yieldController.text);
+                        // Unusual amounts and repeat records go straight
+                        // into the forecast, so ask before saving them
+                        final warnings = _sanityWarnings(
+                            block, kg, pickedDate, isEdit ? editId : null);
+                        if (warnings.isNotEmpty &&
+                            !await _confirmUnusual(sheetContext, warnings)) {
+                          return;
+                        }
+                        if (!sheetContext.mounted) return;
                         Navigator.pop(sheetContext);
                         final data = {
-                          'date': dateController.text,
+                          'date': _isoDate(pickedDate),
                           'block': block,
-                          'yield_kg': double.parse(yieldController.text),
+                          'yield_kg': kg,
                           'weather': weather,
                           'notes': notesController.text,
                         };
@@ -432,6 +587,34 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 110),
               children: [
+                if (_offline) ...[
+                  NoteBar(
+                    color: AppColors.caution,
+                    background: AppColors.bronzeSoft,
+                    child: Text(
+                      _cachedAt == null
+                          ? 'No internet. New records are saved on this phone and sent later.'
+                          : 'No internet. Showing the records saved on this phone '
+                              '(${_prettyDate(_cachedAt!)}). New records are sent '
+                              'automatically when there is signal.',
+                      style: AppText.body,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                if (_logs.any((l) => l['notes'] == 'SYNTHETIC')) ...[
+                  const NoteBar(
+                    color: AppColors.alert,
+                    background: AppColors.alertSoft,
+                    child: Text(
+                      'Sample data: records marked SYNTHETIC are practice '
+                      'numbers, not real harvests. Forecasts made from them are '
+                      'not real results.',
+                      style: AppText.body,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 _buildSummary(logs),
                 const SizedBox(height: 16),
                 _buildSearch(),
@@ -439,11 +622,18 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                 _buildFilters(),
                 const SizedBox(height: 16),
                 if (logs.isEmpty)
-                  const QuietMessage(
-                    icon: Icons.menu_book_outlined,
-                    title: 'No records here yet',
-                    message:
-                        'Tap “Add record” to write down your first harvest.',
+                  QuietMessage(
+                    icon: _offline
+                        ? Icons.cloud_off_outlined
+                        : Icons.menu_book_outlined,
+                    title: _offline
+                        ? 'No internet'
+                        : (_allLogs.isEmpty
+                            ? 'No records here yet'
+                            : 'No records match'),
+                    message: _offline
+                        ? 'Records will show when there is signal. You can still add a record; it is kept on this phone.'
+                        : 'Tap “Add record” to write down a cycle total.',
                   )
                 else
                   Panel(
@@ -569,9 +759,13 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
     final weather = (log['weather'] ?? '').toString();
     final notes = (log['notes'] ?? '').toString();
     final kg = (log['yield_kg'] as num).toStringAsFixed(1);
+    final isPending = log['_pending'] == true;
 
     return InkWell(
-      onTap: () => _showLogSheet(existing: log),
+      onTap: () => isPending
+          ? showNote(context,
+              'This record is saved on the phone and will be sent when there is internet.')
+          : _showLogSheet(existing: log),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
@@ -617,6 +811,10 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                     ],
                   ),
                   const SizedBox(height: 4),
+                  if (isPending) ...[
+                    const Tag('Waiting to send', color: AppColors.caution),
+                    const SizedBox(height: 4),
+                  ],
                   Row(
                     children: [
                       if (weather.isNotEmpty) ...[
