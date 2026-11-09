@@ -22,9 +22,7 @@ void main() async {
   // Rain alerts must never stop the app from starting
   try {
     await RainAlertService.init();
-    if (await RainAlertService.isEnabled()) {
-      await RainAlertService.startBackgroundChecks();
-    }
+    await RainAlertService.syncBackgroundChecks();
   } catch (_) {}
 
   runApp(const RubberTapApp());
@@ -59,8 +57,13 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    // Once per app start: offer a newer version if one has been published
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // First start only: Android's own "Allow notifications?" prompt.
+      // Rain alerts follow that choice (changed later in phone Settings).
+      try {
+        await RainAlertService.askOnceAndSync();
+      } catch (_) {}
+      // Once per app start: offer a newer version if one has been published
       if (mounted) checkForUpdate(context);
     });
   }

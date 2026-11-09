@@ -68,7 +68,7 @@ class RainAlertService {
   static const String _channelName = 'Rain alerts';
   static const int _notificationId = 1001;
 
-  static const String _kEnabled = 'rain_alerts_enabled';
+  static const String _kAsked = 'notifications_permission_asked';
   static const String _kLastRank = 'rain_alerts_last_rank';
   static const String _kLastTime = 'rain_alerts_last_time';
 
@@ -96,14 +96,35 @@ class RainAlertService {
     return granted ?? false;
   }
 
+  /// Rain alerts are ON whenever the phone allows RubberTap's notifications.
+  /// There is no separate switch in the app: the farmer turns them on or off
+  /// in the phone's Settings > Apps > RubberTap > Notifications, like any app.
   static Future<bool> isEnabled() async {
-    final prefs = SharedPreferencesAsync();
-    return (await prefs.getBool(_kEnabled)) ?? false;
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    return await android?.areNotificationsEnabled() ?? false;
   }
 
-  static Future<void> setEnabled(bool value) async {
+  /// On the first start, shows Android's own "Allow notifications?" prompt
+  /// (Android 13+; older phones allow them by default). Asked only once, like
+  /// other apps. Then starts or stops the background checks to match.
+  static Future<void> askOnceAndSync() async {
+    await init();
     final prefs = SharedPreferencesAsync();
-    await prefs.setBool(_kEnabled, value);
+    if (!((await prefs.getBool(_kAsked)) ?? false)) {
+      await prefs.setBool(_kAsked, true);
+      await requestPermission();
+    }
+    await syncBackgroundChecks();
+  }
+
+  /// Background checks run only while notifications are allowed.
+  static Future<void> syncBackgroundChecks() async {
+    if (await isEnabled()) {
+      await startBackgroundChecks();
+    } else {
+      await stopBackgroundChecks();
+    }
   }
 
   static Future<void> _ensureWorkmanager() async {

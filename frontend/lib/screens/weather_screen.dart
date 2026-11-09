@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:app_settings/app_settings.dart';
 import '../theme.dart';
 import '../rain_alerts.dart';
-import '../record_store.dart';
 import '../tapping_advice.dart';
 
 class WeatherScreen extends StatefulWidget {
@@ -27,14 +27,14 @@ class _Advice {
   });
 }
 
-class _WeatherScreenState extends State<WeatherScreen> {
+class _WeatherScreenState extends State<WeatherScreen>
+    with WidgetsBindingObserver {
   bool _isLoading = true;
   Map<String, dynamic>? _currentWeather;
   List<Map<String, dynamic>> _forecast = [];
   DateTime? _lastUpdated;
   Timer? _timer;
   bool _alertsOn = false;
-  bool _alertsBusy = false;
   // Advice for the next tapping MORNING (Open-Meteo, same source as the
   // calendar). Null while loading or if it could not be downloaded.
   TappingAdvice? _morningAdvice;
@@ -46,6 +46,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
   @override
   void initState() {
     super.initState();
+    // Notice when the farmer comes back from the phone's Settings
+    WidgetsBinding.instance.addObserver(this);
     _fetchWeather();
     _loadAlertSetting();
     // Refresh every 10 minutes while the screen is open
@@ -56,6 +58,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
   }
@@ -120,6 +123,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   // ------------------------------------------------------------ rain alerts
+  // Rain alerts follow the phone's notification setting for RubberTap
+  // (asked once on the first start). There is no switch inside the app.
 
   Future<void> _loadAlertSetting() async {
     final on = await RainAlertService.isEnabled();
@@ -127,64 +132,25 @@ class _WeatherScreenState extends State<WeatherScreen> {
     setState(() => _alertsOn = on);
   }
 
-  Future<void> _toggleAlerts(bool on) async {
-    setState(() => _alertsBusy = true);
+  /// Opens the phone's notification settings for RubberTap.
+  Future<void> _openNotificationSettings() async {
     try {
-      if (on) {
-        final granted = await RainAlertService.requestPermission();
-        if (!granted) {
-          if (mounted) {
-            showNote(
-              context,
-              'Please allow notifications for RubberTap in your phone settings.',
-              error: true,
-            );
-          }
-          return;
-        }
-        await RainAlertService.setEnabled(true);
-        await RainAlertService.startBackgroundChecks();
-        if (mounted) {
-          setState(() => _alertsOn = true);
-          showNote(context, 'Rain alerts are on.');
-        }
-      } else {
-        await RainAlertService.setEnabled(false);
-        await RainAlertService.stopBackgroundChecks();
-        if (mounted) {
-          setState(() => _alertsOn = false);
-          showNote(context, 'Rain alerts are off.');
-        }
-      }
-    } catch (e) {
+      await AppSettings.openAppSettings(type: AppSettingsType.notification);
+    } catch (_) {
       if (mounted) {
-        showNote(context, 'Could not change rain alerts. ${plainError(e)}', error: true);
+        showNote(context,
+            'Open your phone Settings > Apps > RubberTap > Notifications.');
       }
-    } finally {
-      if (mounted) setState(() => _alertsBusy = false);
     }
   }
 
-  Future<void> _sendTest() async {
-    try {
-      await RainAlertService.sendTest();
-      if (mounted) showNote(context, 'Test alert sent. Check your notifications.');
-    } catch (e) {
-      if (mounted) showNote(context, 'Could not send the test. ${plainError(e)}', error: true);
-    }
-  }
-
-  Future<void> _checkNow() async {
-    setState(() => _alertsBusy = true);
-    try {
-      final summary = await RainAlertService.checkAndNotify(force: true);
-      if (mounted) showNote(context, summary);
-    } catch (e) {
-      if (mounted) {
-        showNote(context, 'Could not check the weather. ${plainError(e)}', error: true);
-      }
-    } finally {
-      if (mounted) setState(() => _alertsBusy = false);
+  /// Back from the phone's Settings: show the new state and start or stop
+  /// the background checks to match.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      RainAlertService.syncBackgroundChecks().catchError((_) {});
+      _loadAlertSetting();
     }
   }
 
@@ -395,52 +361,44 @@ class _WeatherScreenState extends State<WeatherScreen> {
 
   Widget _buildAlerts() {
     return Panel(
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Rain alerts', style: AppText.bodyStrong),
-                    SizedBox(height: 2),
-                    Text(
-                      'A phone notification when rain is coming, with advice on what to do.',
-                      style: AppText.caption,
-                    ),
-                  ],
-                ),
+              Icon(
+                _alertsOn
+                    ? Icons.notifications_active_outlined
+                    : Icons.notifications_off_outlined,
+                size: 22,
+                color: _alertsOn ? AppColors.good : AppColors.inkFaint,
               ),
-              Switch(
-                value: _alertsOn,
-                onChanged: _alertsBusy ? null : _toggleAlerts,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  _alertsOn ? 'Rain alerts are on' : 'Rain alerts are off',
+                  style: AppText.bodyStrong,
+                ),
               ),
             ],
           ),
-          if (_alertsOn) ...[
+          const SizedBox(height: 6),
+          Text(
+            _alertsOn
+                ? 'You get a notification when rain is coming to the farm. '
+                    'To turn them off, use your phone Settings > Apps > '
+                    'RubberTap > Notifications.'
+                : 'Notifications for RubberTap are turned off on this phone, '
+                    'so rain warnings cannot be shown.',
+            style: AppText.caption,
+          ),
+          if (!_alertsOn) ...[
             const SizedBox(height: 12),
-            const Divider(),
-            const SizedBox(height: 12),
-            const Text(
-              'The forecast is checked about every 30 minutes, even when the app is closed. Phones can delay checks to save battery, so it helps to allow RubberTap to run in the background.',
-              style: AppText.caption,
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                OutlinedButton(
-                  onPressed: _alertsBusy ? null : _sendTest,
-                  child: const Text('Send a test alert'),
-                ),
-                TextButton(
-                  onPressed: _alertsBusy ? null : _checkNow,
-                  child: const Text('Check now'),
-                ),
-              ],
+            OutlinedButton.icon(
+              onPressed: _openNotificationSettings,
+              icon: const Icon(Icons.settings_outlined, size: 18),
+              label: const Text('Turn on in phone settings'),
             ),
           ],
         ],
