@@ -102,13 +102,14 @@ class _GisScreenState extends State<GisScreen> {
     }
   }
 
+  /// The block's next-cycle forecast compared with ITS OWN usual harvest.
+  /// (Blocks are never compared with each other: Block B is naturally smaller.)
   String _getBlockStatus(String blockName) {
-    if (_blockYields.isEmpty) return 'unknown';
-    final avgAll =
-        _blockYields.values.reduce((a, b) => a + b) / _blockYields.length;
-    final blockYield = _blockYields[blockName] ?? 0;
-    if (blockYield >= avgAll * 0.9) return 'good';
-    if (blockYield >= avgAll * 0.7) return 'low';
+    final usual = _blockYields[blockName];
+    final forecast = _blockForecasts[blockName];
+    if (usual == null || usual <= 0 || forecast == null) return 'unknown';
+    if (forecast >= usual * 0.9) return 'good';
+    if (forecast >= usual * 0.7) return 'low';
     return 'critical';
   }
 
@@ -128,11 +129,11 @@ class _GisScreenState extends State<GisScreen> {
   String _statusLabel(String status) {
     switch (status) {
       case 'good':
-        return 'On track';
+        return 'Normal';
       case 'low':
         return 'Below usual';
       case 'critical':
-        return 'Needs attention';
+        return 'Much lower';
       default:
         return 'No data yet';
     }
@@ -533,11 +534,11 @@ class _GisScreenState extends State<GisScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SectionLabel('Harvest vs. usual'),
+          const SectionLabel('Next cycle vs. its usual'),
           const SizedBox(height: 8),
-          row(AppColors.good, 'On track'),
+          row(AppColors.good, 'Normal'),
           row(AppColors.caution, 'Below usual'),
-          row(AppColors.alert, 'Needs attention'),
+          row(AppColors.alert, 'Much lower'),
           if (_is3D) ...[
             const SizedBox(height: 6),
             const Row(

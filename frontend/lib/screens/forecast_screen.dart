@@ -279,9 +279,12 @@ class _ForecastScreenState extends State<ForecastScreen> {
     final last = d.lastKg;
     if (last == null || last <= 0) return null;
     final pct = (forecast - last) / last * 100;
-    final when = d.lastDate == null
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final lastDay = DateTime.tryParse(d.lastDate ?? '');
+    final when = lastDay == null
         ? 'your last recorded cycle'
-        : 'your last recorded cycle (${d.lastDate})';
+        : 'your last recorded cycle (${lastDay.day} ${months[lastDay.month - 1]})';
     if (pct.abs() < 1) {
       return 'That is about the same as $when: ${last.toStringAsFixed(1)} kg.';
     }

@@ -14,28 +14,17 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   bool _isLoading = true;
-  int _totalBlocks = 0;
-  double _thisMonthYield = 0;
   double _lastForecast = 0;
-  int _anomalies = 0;
+  // Latest recorded cycle per block: {'Block A': {'kg': 70.0, 'date': '2026-10-30'}}
+  Map<String, Map<String, dynamic>> _lastCycle = {};
+  int _cyclesRecorded = 0;
+  // Plain-language warnings about the latest cycle of each block
+  List<String> _lowNotes = [];
 
   // Calendar
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
   Map<DateTime, Map<String, dynamic>> _calendarData = {};
-
-  // Check if a date is a tapping day within any cycle
-  bool _isTappingDay(DateTime date) {
-    for (var cycle in _cycles) {
-      final start = DateTime.parse(cycle['start_date']);
-      final end = DateTime.parse(cycle['end_date']);
-      if (!date.isBefore(start) && !date.isAfter(end)) {
-        final day = date.difference(start).inDays + 1;
-        if (day >= 1 && day <= 15) return true;
-      }
-    }
-    return false;
-  }
 
   List<Map<String, dynamic>> _cycles = [];
 
@@ -66,24 +55,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
           .from('production_logs')
           .select()
           .order('date', ascending: false);
-      final allLogs = List<Map<String, dynamic>>.from(logs);
+      final allLogs = List<Map<String, dynamic>>.from(logs); // newest first
 
-      final blocks = allLogs.map((l) => l['block']).toSet();
-      final now = DateTime.now();
-      final thisMonth = allLogs.where((l) {
-        final date = DateTime.parse(l['date']);
-        return date.month == now.month && date.year == now.year;
-      });
-      final monthYield =
-          thisMonth.fold(0.0, (sum, l) => sum + (l['yield_kg'] as num));
-
-      double avgYield = allLogs.isEmpty
-          ? 0
-          : allLogs.fold(0.0, (sum, l) => sum + (l['yield_kg'] as num)) /
-              allLogs.length;
-      final anomalyCount = allLogs
-          .where((l) => (l['yield_kg'] as num) < avgYield * 0.7)
-          .length;
+      // Latest cycle per block, and whether it was unusually low for THAT
+      // block (Block B is naturally smaller, so blocks are never compared
+      // with each other). Only the latest cycle is checked: it is the one a
+      // tapper can still do something about.
+      final lastCycle = <String, Map<String, dynamic>>{};
+      final lowNotes = <String>[];
+      var cycles = 0;
+      for (final block in ['Block A', 'Block B']) {
+        final mine = allLogs.where((l) => l['block'] == block).toList();
+        if (mine.isEmpty) continue;
+        cycles = mine.length > cycles ? mine.length : cycles;
+        final kg = (mine.first['yield_kg'] as num).toDouble();
+        lastCycle[block] = {'kg': kg, 'date': mine.first['date']};
+        if (mine.length >= 4) {
+          final usual =
+              mine.fold(0.0, (s, l) => s + (l['yield_kg'] as num)) / mine.length;
+          if (kg < usual * 0.7) {
+            lowNotes.add('$block\'s last cycle (${_prettyDay(mine.first['date'])}): '
+                '${kg.toStringAsFixed(1)} kg, well below its usual '
+                '${usual.toStringAsFixed(1)} kg. It may be worth checking the trees.');
+          }
+        }
+      }
 
       // Next cycle for the whole farm: both blocks' forecasts added together
       double latestForecast = 0;
@@ -95,10 +91,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
 
       setState(() {
-        _totalBlocks = blocks.length;
-        _thisMonthYield = monthYield;
         _lastForecast = latestForecast;
-        _anomalies = anomalyCount;
+        _lastCycle = lastCycle;
+        _cyclesRecorded = cycles;
+        _lowNotes = lowNotes;
       });
     } catch (e) {
       if (isOffline(e) && mounted) setState(() => _offline = true);
@@ -601,9 +597,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
                 children: [
                   _buildHeader(),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 20),
+                  _buildToday(),
+                  const SizedBox(height: 16),
                   _buildOverview(),
-                  if (_anomalies > 0) ...[
+                  if (_lowNotes.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     _buildAttention(),
                   ],
@@ -638,89 +636,129 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildOverview() {
-    final hasForecast = _lastForecast > 0;
+  /// What a tapper needs first: which block to tap today, roughly how much,
+  /// the weather, and a reminder on weigh days (15th and end of month).
+  Widget _buildToday() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final (cycleStart, cycleEnd) = cycleBounds(today);
+    final data = _calendarData[today];
+    final block = (data?['block'] ??
+            blockForDay(today.day - cycleStart.day + 1))
+        .toString();
+    final color = blockColor(block);
+    final expected = data?['predicted_yield'];
+    final weather = data?['weather'];
+    final rain = data?['rainfall'];
+    final weighDay = today == cycleEnd;
+
+    final details = <String>[
+      if (expected != null) 'about ${_kg(expected)} kg expected',
+      if (weather != null)
+        rain is num && rain > 0
+            ? '$weather (${rain.toStringAsFixed(1)} mm rain today)'
+            : weather.toString(),
+    ];
+
     return Panel(
-      padding: EdgeInsets.zero,
+      padding: const EdgeInsets.all(18),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Figure(
-                      label: 'This month',
-                      value: '${_thisMonthYield.toStringAsFixed(1)} kg',
-                      note: 'harvested so far',
-                    ),
-                  ),
-                ),
-                const VerticalDivider(width: 1),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Figure(
-                      label: 'Next cycle forecast',
-                      value: hasForecast
-                          ? '${_lastForecast.toStringAsFixed(1)} kg'
-                          : '—',
-                      note: hasForecast
-                          ? 'both blocks, 15 days'
-                          : 'updated every morning',
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          const SectionLabel('Today'),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text('Tap $block', style: AppText.title)),
+            ],
           ),
-          const Divider(),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Figure(
-                      label: 'Blocks tapped',
-                      value: '$_totalBlocks',
-                      note: 'in your records',
-                    ),
-                  ),
-                ),
-                const VerticalDivider(width: 1),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Figure(
-                      label: 'Needs a look',
-                      value: '$_anomalies',
-                      note: _anomalies == 0
-                          ? 'all records normal'
-                          : 'unusually low',
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          if (details.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(details.join(' · '), style: AppText.body),
+          ],
+          const SizedBox(height: 4),
+          Text(
+            'Cycle ${_prettyDay(isoDate(cycleStart))} – ${_prettyDay(isoDate(cycleEnd))}',
+            style: AppText.caption,
           ),
+          if (weighDay) ...[
+            const SizedBox(height: 12),
+            const NoteBar(
+              color: AppColors.forest,
+              background: AppColors.forestSoft,
+              child: Text(
+                'Weigh day: record each block\'s total for this cycle in the '
+                'Production tab.',
+                style: AppText.body,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
+  Widget _buildOverview() {
+    final hasForecast = _lastForecast > 0;
+    final a = _lastCycle['Block A'];
+    final b = _lastCycle['Block B'];
+    final lastDate = (a ?? b)?['date'];
+    return Panel(
+      padding: EdgeInsets.zero,
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Figure(
+                  label: 'Last cycle',
+                  value: _lastCycle.isEmpty
+                      ? '—'
+                      : [
+                          if (a != null) 'A ${(a['kg'] as double).toStringAsFixed(0)}',
+                          if (b != null) 'B ${(b['kg'] as double).toStringAsFixed(0)}',
+                        ].join(' · '),
+                  small: true, // two numbers must fit on one line
+                  note: _lastCycle.isEmpty
+                      ? 'no records yet'
+                      : 'kg, weighed ${_prettyDay(lastDate)} · $_cyclesRecorded cycles recorded',
+                ),
+              ),
+            ),
+            const VerticalDivider(width: 1),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Figure(
+                  label: 'Next cycle forecast',
+                  value: hasForecast
+                      ? '${_lastForecast.toStringAsFixed(1)} kg'
+                      : '—',
+                  note: hasForecast
+                      ? 'both blocks, 15 days'
+                      : 'updated every morning',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildAttention() {
-    final plural = _anomalies == 1 ? 'record is' : 'records are';
     return NoteBar(
       color: AppColors.alert,
       background: AppColors.alertSoft,
-      child: Text(
-        '$_anomalies $plural well below your usual harvest. It may be worth checking those blocks.',
-        style: AppText.body,
-      ),
+      child: Text(_lowNotes.join('\n\n'), style: AppText.body),
     );
   }
 
