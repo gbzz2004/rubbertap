@@ -206,3 +206,92 @@ List<Map<String, dynamic>> buildDailyPlan(DateTime start,
   }
   return days;
 }
+
+/// The real weather of one farm cycle, as one label plus a short reason.
+class CycleWeather {
+  final String label; // Sunny, Cloudy, Rainy or Windy
+  final String reason; // e.g. "1-15 Jun: 15 of 15 days with rain (97 mm)"
+  const CycleWeather(this.label, this.reason);
+}
+
+/// Labels a cycle from its daily weather, with the SAME rule used when Sir
+/// Arnel's records were imported (see data/README.md): Rainy if at least half
+/// the days had >= 1 mm of rain, else Windy if at least half had wind
+/// >= 30 km/h, else Sunny if at least half were clear, else Cloudy.
+CycleWeather labelCycleWeather(List<Map<String, double>> days, String period) {
+  final n = days.length;
+  final rainDays = days.where((d) => d['rain']! >= 1.0).length;
+  final windyDays = days.where((d) => d['wind']! >= _windyKmh).length;
+  final clearDays = days.where((d) => d['code']! <= 1).length;
+  final mm = days.fold<double>(0, (s, d) => s + d['rain']!);
+  final rainText =
+      '$rainDays of $n days with rain (${mm.toStringAsFixed(0)} mm)';
+  if (rainDays * 2 >= n) return CycleWeather('Rainy', '$period: $rainText');
+  if (windyDays * 2 >= n) {
+    return CycleWeather('Windy', '$period: $windyDays of $n windy days');
+  }
+  if (clearDays * 2 >= n) {
+    return CycleWeather('Sunny', '$period: $clearDays of $n clear days, $rainText');
+  }
+  return CycleWeather('Cloudy', '$period: mostly cloudy, $rainText');
+}
+
+/// The real weather at the farm for the cycle containing [weighDate], from
+/// its first day up to the weigh date (or today, if earlier). Uses Open-Meteo
+/// (the same source as the calendar). Throws if it cannot be downloaded.
+Future<CycleWeather> fetchCycleWeather(DateTime weighDate) async {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final (start, _) = cycleBounds(weighDate);
+  var end = DateTime(weighDate.year, weighDate.month, weighDate.day);
+  if (end.isAfter(today)) end = today;
+
+  // Recent days: forecast service (keeps ~3 months). Older: history archive.
+  final old = today.difference(end).inDays > 60;
+  // The free history archive can take ~15 s to wake up after a quiet spell,
+  // and farm signal is slow: be patient (measured 2026-11-10).
+  final dio = Dio(BaseOptions(
+    connectTimeout: const Duration(seconds: 20),
+    receiveTimeout: const Duration(seconds: 40),
+  ));
+  // The free service sometimes answers slowly: try twice before giving up
+  Response<dynamic>? resp;
+  for (var attempt = 0; resp == null; attempt++) {
+    try {
+      resp = await dio.get(
+        old
+            ? 'https://archive-api.open-meteo.com/v1/archive'
+            : 'https://api.open-meteo.com/v1/forecast',
+        queryParameters: {
+          'latitude': farmLat,
+          'longitude': farmLon,
+          'daily': 'weather_code,precipitation_sum,wind_speed_10m_max',
+          'timezone': 'Asia/Manila',
+          'start_date': isoDate(start),
+          'end_date': isoDate(end),
+        },
+      );
+    } on DioException {
+      if (attempt >= 2) rethrow; // three tries in total
+      await Future<void>.delayed(Duration(seconds: 3 * (attempt + 1)));
+    }
+  }
+  final daily = Map<String, dynamic>.from(resp.data['daily'] as Map);
+  final codes = daily['weather_code'] as List;
+  final days = <Map<String, double>>[];
+  for (var i = 0; i < codes.length; i++) {
+    if (codes[i] == null) continue; // not available yet
+    days.add({
+      'code': (codes[i] as num).toDouble(),
+      'rain': ((daily['precipitation_sum'] as List)[i] as num?)?.toDouble() ?? 0,
+      'wind': ((daily['wind_speed_10m_max'] as List)[i] as num?)?.toDouble() ?? 0,
+    });
+  }
+  if (days.isEmpty) throw const PlanException('No weather data for this cycle.');
+  final period = start.month == end.month
+      ? '${start.day}–${end.day} ${months[end.month - 1]}'
+      : '${start.day} ${months[start.month - 1]} – ${end.day} ${months[end.month - 1]}';
+  return labelCycleWeather(days, period);
+}

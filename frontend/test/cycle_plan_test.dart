@@ -120,4 +120,22 @@ void main() {
     expect(sum('Block A'), closeTo(40.0, 0.05));
     expect(sum('Block B'), closeTo(44.0, 0.05));
   });
+
+  test('cycle weather label follows the import rule', () {
+    Map<String, double> d(double code, double rain, double wind) =>
+        {'code': code, 'rain': rain, 'wind': wind};
+    // 13 of 15 days with rain -> Rainy
+    final rainy = [for (var i = 0; i < 15; i++) d(61, i < 13 ? 5 : 0, 10)];
+    expect(labelCycleWeather(rainy, '1-15 Jun').label, 'Rainy');
+    expect(labelCycleWeather(rainy, '1-15 Jun').reason, contains('13 of 15 days'));
+    // dry and windy -> Windy
+    final windy = [for (var i = 0; i < 15; i++) d(3, 0, 35)];
+    expect(labelCycleWeather(windy, 'x').label, 'Windy');
+    // dry, calm, mostly clear -> Sunny
+    final sunny = [for (var i = 0; i < 15; i++) d(i < 10 ? 0 : 3, 0, 10)];
+    expect(labelCycleWeather(sunny, 'x').label, 'Sunny');
+    // dry, calm, mostly overcast -> Cloudy
+    final cloudy = [for (var i = 0; i < 15; i++) d(3, 0.2, 10)];
+    expect(labelCycleWeather(cloudy, 'x').label, 'Cloudy');
+  });
 }

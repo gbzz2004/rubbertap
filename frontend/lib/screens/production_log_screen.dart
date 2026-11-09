@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart';
+import '../cycle_plan.dart';
 import '../main.dart';
 import '../record_store.dart';
 import '../theme.dart';
@@ -16,7 +16,6 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
   String _selectedBlock = 'All';
   String _sortBy = 'Newest first';
   bool _isLoading = true;
-  bool _isFetchingWeather = false;
   List<Map<String, dynamic>> _logs = [];
   // Offline support (see lib/record_store.dart)
   bool _offline = false;
@@ -60,10 +59,6 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
     'DEC',
   ];
 
-  // Mr. Arnel's farm
-  static const double _farmLat = 7.762639;
-  static const double _farmLon = 122.567028;
-  static const String _weatherApiKey = 'b4bf1e412a554e1efae968eda1f8b25e';
 
   @override
   void initState() {
@@ -79,42 +74,6 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
 
   // ------------------------------------------------------------------ data
 
-  Future<String> _fetchCurrentWeather() async {
-    try {
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 5),
-        receiveTimeout: const Duration(seconds: 5),
-      ));
-      final response = await dio.get(
-        'https://api.openweathermap.org/data/2.5/weather',
-        queryParameters: {
-          'lat': _farmLat,
-          'lon': _farmLon,
-          'appid': _weatherApiKey,
-          'units': 'metric',
-        },
-      );
-      final weatherMain =
-          response.data['weather'][0]['main'].toString().toLowerCase();
-      if (weatherMain.contains('rain') ||
-          weatherMain.contains('drizzle') ||
-          weatherMain.contains('thunderstorm')) {
-        return 'Rainy';
-      } else if (weatherMain.contains('cloud')) {
-        return 'Cloudy';
-      } else if (weatherMain.contains('clear') ||
-          weatherMain.contains('sun')) {
-        return 'Sunny';
-      } else if (weatherMain.contains('wind') ||
-          weatherMain.contains('squall')) {
-        return 'Windy';
-      } else {
-        return 'Cloudy';
-      }
-    } catch (e) {
-      return ''; // unknown (no internet): the tapper picks it, no guessing
-    }
-  }
 
   Future<void> _fetchLogs() async {
     setState(() => _isLoading = true);
@@ -309,18 +268,9 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
 
   // ------------------------------------------------------- add / edit sheet
 
-  Future<void> _openAddDialog() async {
-    setState(() => _isFetchingWeather = true);
-    final weather = await _fetchCurrentWeather();
-    if (!mounted) return;
-    setState(() => _isFetchingWeather = false);
-    _showLogSheet(detectedWeather: weather);
-  }
+  void _openAddDialog() => _showLogSheet();
 
-  void _showLogSheet({
-    Map<String, dynamic>? existing,
-    String detectedWeather = 'Sunny',
-  }) {
+  void _showLogSheet({Map<String, dynamic>? existing}) {
     final dynamic editId = existing?['id'];
     final isEdit = editId != null;
     final yieldController =
@@ -334,15 +284,49 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
     final dateController =
         TextEditingController(text: _prettyDate(pickedDate));
     String block = existing?['block']?.toString() ?? 'Block A';
-    String weather = existing?['weather']?.toString() ?? detectedWeather;
+    // New record: the weather is filled in from the REAL weather of the
+    // picked date's cycle (Open-Meteo, same rule as the imported records).
+    String weather = existing?['weather']?.toString() ?? '';
+    String weatherNote = '';
+    var weatherStarted = false;
+    var weatherRequest = 0;
+    var sheetOpen = true;
     final formKey = GlobalKey<FormState>();
+
+    Future<void> loadWeather(StateSetter set) async {
+      final request = ++weatherRequest;
+      final forDate = pickedDate;
+      set(() => weatherNote =
+          'Checking the real weather for this cycle… (this can take up to a minute)');
+      try {
+        final cw = await fetchCycleWeather(forDate);
+        if (!sheetOpen || request != weatherRequest) return;
+        set(() {
+          weather = cw.label;
+          weatherNote = 'Real weather for ${cw.reason}. Change it if needed.';
+        });
+      } catch (e) {
+        debugPrint('Cycle weather lookup failed: $e');
+        if (!sheetOpen || request != weatherRequest) return;
+        set(() => weatherNote = weather.isEmpty
+            ? 'Could not check the weather (no internet). Please pick the weather for this cycle.'
+            : 'Could not check the weather for the new date. Check the choice above.');
+      }
+    }
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) => Padding(
+        builder: (context, setSheetState) {
+          // A new record looks up its cycle's weather once, when it opens
+          if (!isEdit && !weatherStarted) {
+            weatherStarted = true;
+            WidgetsBinding.instance
+                .addPostFrameCallback((_) => loadWeather(setSheetState));
+          }
+          return Padding(
           padding: EdgeInsets.fromLTRB(
             24,
             0,
@@ -385,6 +369,8 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                       if (picked != null) {
                         pickedDate = picked;
                         dateController.text = _prettyDate(picked);
+                        // A different cycle: look up its real weather
+                        loadWeather(setSheetState);
                       }
                     },
                     validator: (v) =>
@@ -438,14 +424,9 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                             ))
                         .toList(),
                   ),
-                  if (!isEdit) ...[
+                  if (weatherNote.isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    Text(
-                      detectedWeather.isEmpty
-                          ? 'Could not check the weather (no internet). Please pick the weather for this cycle.'
-                          : 'Filled in from the weather at the farm right now. Change it if the harvest day was different.',
-                      style: AppText.caption,
-                    ),
+                    Text(weatherNote, style: AppText.caption),
                   ],
                   const SizedBox(height: 18),
                   TextFormField(
@@ -500,9 +481,10 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
               ),
             ),
           ),
-        ),
+        );
+        },
       ),
-    );
+    ).whenComplete(() => sheetOpen = false);
   }
 
   // ------------------------------------------------------------------ build
@@ -523,16 +505,9 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _isFetchingWeather ? null : _openAddDialog,
-        icon: _isFetchingWeather
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.white),
-              )
-            : const Icon(Icons.add),
-        label: Text(_isFetchingWeather ? 'Checking weather…' : 'Add record'),
+        onPressed: _openAddDialog,
+        icon: const Icon(Icons.add),
+        label: const Text('Add record'),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
