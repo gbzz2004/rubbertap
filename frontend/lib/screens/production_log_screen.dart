@@ -234,50 +234,6 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
     }
   }
 
-  Future<void> _confirmDelete(int id) async {
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Delete this record?', style: AppText.heading),
-        content: const Text(
-          'It will be removed from the records and the forecast.',
-          style: AppText.body,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Keep it',
-                style: TextStyle(color: AppColors.inkSoft)),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              try {
-                await supabase.from('production_logs').delete().eq('id', id);
-                await _fetchLogs();
-                if (mounted) showNote(context, 'Record deleted.');
-              } catch (e) {
-                if (mounted) {
-                  showNote(
-                      context,
-                      isOffline(e)
-                          ? 'No internet. Deleting needs a connection; nothing was deleted.'
-                          : plainError(e),
-                      error: true);
-                }
-              }
-            },
-            child: const Text('Delete',
-                style: TextStyle(color: AppColors.alert)),
-          ),
-        ],
-      ),
-    );
-  }
-
   // --------------------------------------------------------- sanity checks
 
   /// Plain-language warnings for a record that looks like a typo or a
@@ -536,21 +492,10 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                       child: Text(isEdit ? 'Save changes' : 'Save record'),
                     ),
                   ),
-                  if (isEdit) ...[
-                    const SizedBox(height: 8),
-                    Center(
-                      child: TextButton.icon(
-                        onPressed: () {
-                          Navigator.pop(sheetContext);
-                          _confirmDelete(editId as int);
-                        },
-                        icon: const Icon(Icons.delete_outline,
-                            size: 18, color: AppColors.alert),
-                        label: const Text('Delete this record',
-                            style: TextStyle(color: AppColors.alert)),
-                      ),
-                    ),
-                  ],
+                  // No delete in the app: a wrong record is corrected by
+                  // editing it. (A real mistake can be removed by the
+                  // developer in Supabase; production_logs_history keeps a
+                  // copy of every change either way.)
                 ],
               ),
             ),
