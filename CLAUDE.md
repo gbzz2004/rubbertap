@@ -35,16 +35,34 @@ frontend/                Flutter app (Android)
   lib/theme.dart         palette, text styles, shared widgets (Panel, Figure, Tag...)
   lib/rain_alerts.dart   rain notifications (WorkManager + local notifications)
   lib/screens/           dashboard, production_log, gis, forecast, weather
-backend/                 FastAPI (ML only)
-  app/main.py            app + routers
-  app/routers/           forecast.py (/forecast/run), cycle.py (/cycle/plan)
-  app/ml/                models.py (5 models), cycle.py (daily allocation by weather)
+  lib/cycle_plan.dart    cycle calendar + daily plan (must match backend cycle.py)
+  lib/tapping_advice.dart advice for the tapping morning (Open-Meteo hourly)
+  lib/record_store.dart  offline copy of records + records waiting to send
+  lib/update_check.dart  "new version available" notice (app_versions table)
+  lib/farm_geometry.dart block outlines (PLACEHOLDERS until real corners)
+backend/                 Python ML (FastAPI kept for local development)
+  run_forecasts.py       the daily job: forecast + cycles -> Supabase
+  evaluate.py            Chapter 4 tables (writes nothing to Supabase)
+  import_records.py      check/import real records, remove synthetic ones
+  publish_release.py     upload a new APK + app_versions row (service key)
+  app/ml/                models.py (5 models), cycle.py (calendar + plan),
+                         auto_cycle.py (automatic cycles + recorded history)
+  sql/                   production_history.sql (record history + restore)
+  tests/test_cycles.py   cycle checks (run: python tests/test_cycles.py)
   .env                   secrets. NEVER commit it or paste keys into any file.
+.github/workflows/       forecast.yml: daily 06:00 Manila job on GitHub Actions
+data/                    Sir Arnel's real records; git-ignored on purpose
 
 ## Stack
-Flutter + Supabase (data; row-level security is OFF) + FastAPI (ML) +
-OpenWeatherMap (weather inside the app) + Open-Meteo (weather for the 15-day
-plan, in the backend) + flutter_map with OpenStreetMap tiles.
+Flutter + Supabase (data, Realtime, Storage for APKs; row-level security is
+OFF) + Python ML run daily by GitHub Actions (results saved in Supabase; the
+phone only reads them) + Open-Meteo (calendar, plan, tapping advice) +
+OpenWeatherMap (current conditions and rain alerts) + MapLibre (maplibre_gl)
+with Esri satellite / OSM tiles and 3D block shapes.
+Release: app ID com.rubbertap.app, signed with the key in
+C:\Users\Administrator\.rubbertap\ (never in the repo); always build with
+`flutter build apk --release --split-per-abi`, raise the +build number, then
+`python publish_release.py --notes "..."`.
 
 ## How to run (Windows PowerShell, three terminals)
 1. Emulator:  emulator -avd RubberTapDevice -gpu swiftshader_indirect -no-snapshot
@@ -85,9 +103,10 @@ and restart it.
   production_logs_history (RLS on, no policies: the app key cannot read or
   change it). Restore queries: backend/sql/production_history.sql.
 - Free OpenWeatherMap data updates about every 2 hours and forecasts come in 3-hour steps.
-- The backend only runs on the developer's PC. Planned: deploy to Render
-  (free tier is 512 MB / 0.1 CPU and sleeps after 15 minutes), train on the
-  server, store results in Supabase, and let the phone read the stored results.
+- The models run on GitHub Actions every morning (06:00 Manila) and save
+  results to Supabase; the app reads them, so it needs no PC. The app's
+  refresh button only reloads saved results; a fresh run is started from the
+  GitHub Actions tab (an Edge Function trigger was planned, not built).
 
 ## Conventions
 - UI: calm palette from theme.dart (forest green = Block A, bronze = Block B).
