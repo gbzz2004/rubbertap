@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../main.dart';
 import '../theme.dart';
 
 double _num(dynamic v) => (v as num).toDouble();
+
+/// A clear message for the screen when there is no forecast to show.
+class _NoForecast implements Exception {
+  final String message;
+  const _NoForecast(this.message);
+}
 
 /// Plain-language description of one forecasting method.
 class _ModelInfo {
@@ -27,7 +33,7 @@ class _ForecastData {
   final double? lastKg;
   final String? lastDate;
   final double? avgKg;
-  final DateTime fetchedAt;
+  final DateTime fetchedAt; // when the models made this forecast
 
   const _ForecastData({
     required this.api,
@@ -46,16 +52,12 @@ class ForecastScreen extends StatefulWidget {
 }
 
 class _ForecastScreenState extends State<ForecastScreen> {
-  // 10.0.2.2 = your PC's localhost as seen from the Android emulator.
-  // Override with --dart-define=API_URL=... (phone over USB, or Render later).
-  static const String _apiBaseUrl =
-      String.fromEnvironment('API_URL', defaultValue: 'http://10.0.2.2:8000');
-
-  // Results are remembered while the app is open, so tapping the tab again
-  // shows them instantly instead of re-training for a minute.
+  // The models run on GitHub (backend/run_forecasts.py) every morning and
+  // save each run in the forecast_runs table. This screen only READS the
+  // newest finished run, so it opens instantly and needs no PC.
+  // Remembered while the app is open; cleared when a new run arrives.
   static final Map<String, _ForecastData> _cache = {};
-  static final Map<String, Future<_ForecastData>> _inFlight = {};
-  static const Duration _cacheLife = Duration(minutes: 30);
+  RealtimeChannel? _channel;
 
   // Keys must match the FastAPI response
   static const List<String> _modelKeys = [
@@ -122,91 +124,105 @@ class _ForecastScreenState extends State<ForecastScreen> {
   @override
   void initState() {
     super.initState();
-    // Run automatically as soon as the screen opens
+    // Load as soon as the screen opens
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _load();
     });
+    // When a new run finishes on GitHub, show it without any button press
+    _channel = supabase
+        .channel('forecast-runs')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'forecast_runs',
+          callback: (payload) {
+            if (payload.newRecord['status'] == 'done' && mounted) {
+              _cache.clear();
+              _load();
+            }
+          },
+        )
+        .subscribe();
+  }
+
+  @override
+  void dispose() {
+    final channel = _channel;
+    if (channel != null) supabase.removeChannel(channel);
+    super.dispose();
   }
 
   // ---------------------------------------------------------------- loading
 
   Future<_ForecastData> _fetchForecast(String block) async {
-    try {
-      final dio = Dio(BaseOptions(
-        baseUrl: _apiBaseUrl,
-        connectTimeout: const Duration(seconds: 10),
-        // Training 5 models can take a while
-        receiveTimeout: const Duration(seconds: 120),
-      ));
-      // periods: 1 = the next 15-day cycle (each record is a 15-day total)
-      final response = await dio
-          .post('/forecast/run', data: {'block': block, 'periods': 1});
-      final api = Map<String, dynamic>.from(response.data);
-
-      // The farm's own numbers, used to explain the forecast in plain words
-      double? lastKg;
-      String? lastDate;
-      double? avgKg;
-      try {
-        final logs = await supabase
-            .from('production_logs')
-            .select('date, yield_kg')
-            .eq('block', block)
-            .order('date', ascending: false);
-        final list = List<Map<String, dynamic>>.from(logs);
-        if (list.isNotEmpty) {
-          lastKg = _num(list.first['yield_kg']);
-          lastDate = list.first['date'].toString();
-          avgKg = list.fold<double>(0, (s, l) => s + _num(l['yield_kg'])) /
-              list.length;
-        }
-      } catch (_) {
-        // The comparison with past harvests is a bonus; ignore failures.
-      }
-
-      final data = _ForecastData(
-        api: api,
-        lastKg: lastKg,
-        lastDate: lastDate,
-        avgKg: avgKg,
-        fetchedAt: DateTime.now(),
-      );
-      _cache[block] = data;
-      return data;
-    } finally {
-      _inFlight.remove(block);
+    // The newest finished run (both blocks are saved together)
+    final runs = await supabase
+        .from('forecast_runs')
+        .select('created_at, results')
+        .eq('status', 'done')
+        .order('id', ascending: false)
+        .limit(1);
+    final list = List<Map<String, dynamic>>.from(runs);
+    if (list.isEmpty) {
+      throw const _NoForecast(
+          'No forecast has been made yet. It is updated every morning at 6:00.');
     }
+    final results = Map<String, dynamic>.from(list.first['results'] as Map);
+    final blockResult = results[block];
+    if (blockResult == null) {
+      throw _NoForecast(
+          'There are not enough saved harvest records for $block yet. Add more records in the Production tab. The forecast is updated every morning.');
+    }
+    final api = Map<String, dynamic>.from(blockResult as Map);
+    final madeAt =
+        DateTime.parse(list.first['created_at'].toString()).toLocal();
+
+    // The farm's own numbers, used to explain the forecast in plain words
+    double? lastKg;
+    String? lastDate;
+    double? avgKg;
+    try {
+      final logs = await supabase
+          .from('production_logs')
+          .select('date, yield_kg')
+          .eq('block', block)
+          .order('date', ascending: false);
+      final rows = List<Map<String, dynamic>>.from(logs);
+      if (rows.isNotEmpty) {
+        lastKg = _num(rows.first['yield_kg']);
+        lastDate = rows.first['date'].toString();
+        avgKg = rows.fold<double>(0, (s, l) => s + _num(l['yield_kg'])) /
+            rows.length;
+      }
+    } catch (_) {
+      // The comparison with past harvests is a bonus; ignore failures.
+    }
+
+    final data = _ForecastData(
+      api: api,
+      lastKg: lastKg,
+      lastDate: lastDate,
+      avgKg: avgKg,
+      fetchedAt: madeAt,
+    );
+    _cache[block] = data;
+    return data;
   }
 
-  Future<void> _load({bool force = false}) async {
+  /// Shows the remembered forecast at once, then always checks Supabase for
+  /// a newer run (a quick read, not a model run). This matters because the
+  /// screen is closed while another tab is open and can miss live updates.
+  Future<void> _load() async {
     final block = _selectedBlock;
     final cached = _cache[block];
-
-    if (!force &&
-        cached != null &&
-        DateTime.now().difference(cached.fetchedAt) < _cacheLife) {
-      setState(() {
-        _data = cached;
-        _error = null;
-        _isLoading = false;
-      });
-      return;
-    }
-
     setState(() {
-      _data = null;
+      _data = cached;
       _error = null;
       _isLoading = true;
     });
 
     try {
-      // If a run for this block is already going (user left and came back),
-      // wait for it instead of starting a second one.
-      final Future<_ForecastData> future =
-          (!force && _inFlight.containsKey(block))
-              ? _inFlight[block]!
-              : (_inFlight[block] = _fetchForecast(block));
-      final data = await future;
+      final data = await _fetchForecast(block);
       if (!mounted || _selectedBlock != block) return;
       setState(() {
         _data = data;
@@ -214,6 +230,7 @@ class _ForecastScreenState extends State<ForecastScreen> {
       });
     } catch (e) {
       if (!mounted || _selectedBlock != block) return;
+      debugPrint('Forecast load failed: $e');
       setState(() {
         _error = _friendlyError(e);
         _isLoading = false;
@@ -222,21 +239,8 @@ class _ForecastScreenState extends State<ForecastScreen> {
   }
 
   String _friendlyError(Object e) {
-    if (e is DioException) {
-      final data = e.response?.data;
-      if (data is Map && data['detail'] != null) {
-        final detail = data['detail'].toString();
-        if (detail.contains('Not enough data')) {
-          return 'There are not enough saved harvest records for this block yet. Add more records in the Production tab, then try again.';
-        }
-        return detail;
-      }
-      if (e.response == null) {
-        return 'Cannot reach the forecast server. Please make sure it is running and try again.';
-      }
-      return 'The forecast server had a problem (code ${e.response?.statusCode}).';
-    }
-    return 'Something went wrong: $e';
+    if (e is _NoForecast) return e.message;
+    return 'Could not load the forecast. Please check the internet connection and try again.';
   }
 
   // ---------------------------------------------------------- plain language
@@ -285,11 +289,22 @@ class _ForecastScreenState extends State<ForecastScreen> {
     return 'That is about ${pct.abs().toStringAsFixed(0)}% $dir than $when: ${last.toStringAsFixed(1)} kg.';
   }
 
+  /// When the models made this forecast, e.g. "Updated today, 6:02 AM".
   String _updatedText(DateTime t) {
-    final mins = DateTime.now().difference(t).inMinutes;
-    if (mins < 1) return 'Updated just now';
-    if (mins == 1) return 'Updated 1 minute ago';
-    return 'Updated $mins minutes ago';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final now = DateTime.now();
+    final days = DateTime(now.year, now.month, now.day)
+        .difference(DateTime(t.year, t.month, t.day))
+        .inDays;
+    final hour = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    final time =
+        '$hour:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'AM' : 'PM'}';
+    if (days == 0) return 'Updated today, $time';
+    if (days == 1) return 'Updated yesterday, $time';
+    return 'Updated ${months[t.month - 1]} ${t.day}, $time';
   }
 
   // ------------------------------------------------------------------- build
@@ -301,9 +316,9 @@ class _ForecastScreenState extends State<ForecastScreen> {
         title: const Text('Harvest forecast'),
         actions: [
           IconButton(
-            tooltip: 'Update forecast',
+            tooltip: 'Reload forecast',
             icon: const Icon(Icons.refresh, size: 22),
-            onPressed: _isLoading ? null : () => _load(force: true),
+            onPressed: _isLoading ? null : () => _load(),
           ),
         ],
       ),
@@ -312,7 +327,8 @@ class _ForecastScreenState extends State<ForecastScreen> {
         children: [
           _buildBlockSelector(),
           const SizedBox(height: 20),
-          if (_isLoading) _buildLoading(),
+          // A reload keeps the current numbers on screen until the new ones arrive
+          if (_isLoading && _data == null) _buildLoading(),
           if (_error != null) _buildError(),
           if (_data != null) ..._buildResults(_data!),
         ],
@@ -345,11 +361,11 @@ class _ForecastScreenState extends State<ForecastScreen> {
         children: [
           CircularProgressIndicator(strokeWidth: 2),
           SizedBox(height: 18),
-          Text('Studying your past harvests…',
+          Text('Loading the latest forecast…',
               style: AppText.heading, textAlign: TextAlign.center),
           SizedBox(height: 6),
           Text(
-            'Testing 5 forecasting methods. This can take up to a minute.',
+            'The forecast is updated every morning.',
             style: AppText.caption,
             textAlign: TextAlign.center,
           ),
@@ -369,7 +385,7 @@ class _ForecastScreenState extends State<ForecastScreen> {
         ),
         const SizedBox(height: 8),
         TextButton.icon(
-          onPressed: () => _load(force: true),
+          onPressed: () => _load(),
           icon: const Icon(Icons.refresh, size: 18),
           label: const Text('Try again'),
         ),
