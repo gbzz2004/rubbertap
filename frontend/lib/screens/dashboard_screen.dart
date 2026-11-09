@@ -157,10 +157,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  /// Asks before replacing a cycle that is still running.
+  /// Returns false if the user cancels.
+  Future<bool> _confirmReplace(String runningUntil) async {
+    final until = DateTime.parse(runningUntil);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        surfaceTintColor: Colors.transparent,
+        title: const Text('A cycle is already running', style: AppText.heading),
+        content: Text(
+          'The current cycle runs until ${until.day} ${_months[until.month - 1]}. '
+          'Start a new 15-day cycle from today instead?\n\n'
+          'The rest of the current plan will be replaced. '
+          'Days with a recorded harvest are kept.',
+          style: AppText.body,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep current',
+                style: TextStyle(color: AppColors.inkSoft)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Start new'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<void> _startNewCycle() async {
-    final startStr = DateTime.now().toIso8601String().substring(0, 10);
+    final startStr = isoDate(DateTime.now());
 
     try {
+      // 0) Is a cycle still running? Ask before starting a second one,
+      //    otherwise two plans would overlap on the calendar.
+      final running = List<Map<String, dynamic>>.from(await supabase
+          .from('tapping_cycles')
+          .select('id, start_date, end_date')
+          .eq('status', 'active')
+          .gte('end_date', startStr)
+          .order('end_date', ascending: false));
+      if (running.isNotEmpty) {
+        if (!await _confirmReplace(running.first['end_date'].toString())) {
+          return;
+        }
+      }
+
       setState(() => _isLoading = true);
 
       // 1) Make the per-day plan on the phone: each block's 15-day total from
@@ -175,6 +222,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'end_date':
             isoDate(start.add(const Duration(days: cycleLength - 1))),
       };
+
+      // 1b) Only now that the new plan is ready: end the running cycle(s).
+      //     Their days from today on that have no recorded harvest are
+      //     removed; recorded harvests and past days are never touched.
+      final yesterday = isoDate(start.subtract(const Duration(days: 1)));
+      for (final old in running) {
+        await supabase
+            .from('daily_predictions')
+            .delete()
+            .eq('cycle_id', old['id'])
+            .gte('tap_date', startStr)
+            .isFilter('actual_yield', null);
+        final startedToday = old['start_date'].toString() == startStr;
+        await supabase.from('tapping_cycles').update({
+          // A cycle started today and replaced today never really ran
+          'status': startedToday ? 'cancelled' : 'ended',
+          if (!startedToday) 'end_date': yesterday,
+        }).eq('id', old['id']);
+      }
 
       // 2) Save the cycle
       final cycleResponse = await supabase
@@ -377,12 +443,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
               if (yieldKg == null) return;
               Navigator.pop(dialogContext);
               try {
-                final dateStr = date.toIso8601String().substring(0, 10);
-                await supabase
+                final dateStr = isoDate(date);
+                // .select() returns the rows that were really changed, so
+                // the app never claims a save that did not happen
+                final saved = await supabase
                     .from('daily_predictions')
-                    .update({'actual_yield': yieldKg}).eq('tap_date', dateStr);
+                    .update({'actual_yield': yieldKg})
+                    .eq('tap_date', dateStr)
+                    .select('id');
                 await _fetchCalendarData();
-                if (mounted) showNote(context, 'Harvest saved.');
+                if (!mounted) return;
+                if (saved.isEmpty) {
+                  showNote(
+                      context,
+                      'Nothing was saved: this day has no plan. '
+                      'Record the cycle total in the Production tab instead.',
+                      error: true);
+                } else {
+                  showNote(context, 'Harvest saved.');
+                }
               } catch (e) {
                 if (mounted) showNote(context, 'Error: $e', error: true);
               }
