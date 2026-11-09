@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'theme.dart';
 import 'rain_alerts.dart';
+import 'update_check.dart';
 
 import 'screens/dashboard_screen.dart';
 import 'screens/production_log_screen.dart';
@@ -54,6 +55,15 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Once per app start: offer a newer version if one has been published
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) checkForUpdate(context);
+    });
+  }
 
   final List<Widget> _screens = [
     const DashboardScreen(),
