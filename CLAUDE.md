@@ -51,7 +51,7 @@ backend/                 Python ML (FastAPI kept for local development)
   sql/                   production_history.sql (record history + restore)
   tests/test_cycles.py   cycle checks (run: python tests/test_cycles.py)
   .env                   secrets. NEVER commit it or paste keys into any file.
-.github/workflows/       forecast.yml: daily 06:00 Manila job on GitHub Actions
+.github/workflows/       forecast.yml: daily 06:13 + 12:13 Manila job on GitHub Actions
 data/                    Sir Arnel's real records; git-ignored on purpose
 
 ## Stack
@@ -107,7 +107,7 @@ and restart it.
 - Weather: no service has a station at the farm; all are model estimates on
   ~10-25 km grids, so tapping advice and rain alerts are general guidance.
   OpenWeatherMap was removed on 2026-11-10 (its key is no longer in the app).
-- The models run on GitHub Actions every morning (06:00 Manila) and save
+- The models run on GitHub Actions at 06:13 and 12:13 Manila (backup) and save
   results to Supabase; the app reads them, so it needs no PC. The app's
   refresh button only reloads saved results; a fresh run is started from the
   GitHub Actions tab (an Edge Function trigger was planned, not built).

@@ -9,8 +9,12 @@
 name: Forecast
 
 on:
+  # GitHub's scheduler is best effort: runs at the top of the hour are often
+  # delayed or skipped, so use odd minutes, plus a midday backup run (running
+  # twice is harmless: cycle steps skip what is already done).
   schedule:
-    - cron: "0 22 * * *"   # 22:00 UTC = 06:00 in Manila
+    - cron: "13 22 * * *"  # 22:13 UTC = 06:13 in Manila (main daily run)
+    - cron: "13 4 * * *"   # 04:13 UTC = 12:13 in Manila (backup)
   workflow_dispatch:
     inputs:
       trigger:
