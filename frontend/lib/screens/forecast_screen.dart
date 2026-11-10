@@ -420,6 +420,18 @@ class _ForecastScreenState extends State<ForecastScreen> {
     final sampleData =
         evaluation is Map && (evaluation['synthetic_rows'] ?? 0) > 0;
 
+    // With few cycles the best method falls back to the average: say why
+    final nCycles =
+        evaluation is Map ? (evaluation['n_cycles'] as num?)?.toInt() : null;
+    final avg = d.avgKg;
+    final sameAsAverage = !_wasChecked(best) &&
+        avg != null &&
+        avg > 0 &&
+        (bestForecast - avg).abs() / avg < 0.01;
+
+    // The forecast normally updates every morning (06:13, backup 12:13)
+    final stale = DateTime.now().difference(d.fetchedAt).inHours >= 30;
+
     return [
       if (sampleData) ...[
         const NoteBar(
@@ -428,6 +440,19 @@ class _ForecastScreenState extends State<ForecastScreen> {
           child: Text(
             'Sample data: this forecast was made from practice records, not '
             'the farm\'s real harvests. Do not rely on these numbers yet.',
+            style: AppText.body,
+          ),
+        ),
+        const SizedBox(height: 16),
+      ],
+      if (stale) ...[
+        NoteBar(
+          color: AppColors.caution,
+          background: AppColors.bronzeSoft,
+          child: Text(
+            'This forecast was last ${_updatedText(d.fetchedAt).replaceFirst('Updated', 'updated')}. '
+            'It normally updates every morning, so the numbers may be out of '
+            'date. If it stays old, tell the developer.',
             style: AppText.body,
           ),
         ),
@@ -462,6 +487,17 @@ class _ForecastScreenState extends State<ForecastScreen> {
               const SizedBox(height: 8),
             ],
             Text(checkSentence, style: AppText.caption),
+            if (sameAsAverage) ...[
+              const SizedBox(height: 8),
+              Text(
+                'This is the same as your average harvest per cycle. With only '
+                '${nCycles ?? 'a few'} cycles recorded for this block, the methods '
+                'cannot find a pattern they can trust yet, so the forecast stays '
+                'at the average. About 16 cycles are needed before the methods '
+                'can be tested and start to differ.',
+                style: AppText.caption,
+              ),
+            ],
             const SizedBox(height: 10),
             Text(_updatedText(d.fetchedAt),
                 style:

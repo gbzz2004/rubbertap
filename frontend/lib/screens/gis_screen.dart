@@ -30,6 +30,8 @@ class _GisScreenState extends State<GisScreen> {
   List<Map<String, dynamic>> _blocks = [];
   Map<String, double> _blockYields = {};
   Map<String, double> _blockForecasts = {};
+  // Recorded cycles per block (to explain a forecast equal to the average)
+  Map<String, int> _blockCycles = {};
 
   MapLibreMapController? _map;
   bool _styleReady = false;
@@ -69,8 +71,10 @@ class _GisScreenState extends State<GisScreen> {
       }
 
       Map<String, double> avgYields = {};
+      final cycles = <String, int>{};
       blockYieldMap.forEach((block, yields) {
         avgYields[block] = yields.reduce((a, b) => a + b) / yields.length;
+        cycles[block] = yields.length;
       });
 
       final forecastsResponse = await supabase
@@ -91,6 +95,7 @@ class _GisScreenState extends State<GisScreen> {
       setState(() {
         _blocks = blocks;
         _blockYields = avgYields;
+        _blockCycles = cycles;
         _blockForecasts = forecastMap;
         _isLoading = false;
       });
@@ -637,6 +642,18 @@ class _GisScreenState extends State<GisScreen> {
                   ? 'Area: ${block['area_hectares'] ?? '—'} hectares'
                   : 'Area: ${outlineHectares(_outline(block)).toStringAsFixed(2)} hectares (measured from the map)',
               style: AppText.caption),
+          // With few cycles the forecast falls back to the average: say why
+          if (average != null &&
+              forecast != null &&
+              average > 0 &&
+              (forecast - average).abs() / average < 0.01) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Forecast = average: not enough cycles yet to see patterns '
+              '(${_blockCycles[name] ?? 0} of about 16 recorded).',
+              style: AppText.caption,
+            ),
+          ],
         ],
       ),
     );

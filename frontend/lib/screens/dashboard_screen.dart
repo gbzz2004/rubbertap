@@ -23,6 +23,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<String> _lowNotes = [];
   // Advice for the next tapping morning (same as the Weather tab)
   TappingAdvice? _morningAdvice;
+  // When the latest forecast was made (it normally updates every morning)
+  DateTime? _forecastMadeAt;
 
   // Calendar
   DateTime _focusedDay = DateTime.now();
@@ -88,6 +90,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       }
 
+      // When was the latest forecast made? (null if none yet)
+      DateTime? madeAt;
+      try {
+        final runs = await supabase
+            .from('forecast_runs')
+            .select('created_at')
+            .eq('status', 'done')
+            .order('id', ascending: false)
+            .limit(1);
+        if (runs.isNotEmpty) {
+          madeAt = DateTime.parse(runs.first['created_at'].toString()).toLocal();
+        }
+      } catch (_) {}
+
       // Next cycle for the whole farm: both blocks' forecasts added together
       double latestForecast = 0;
       try {
@@ -99,6 +115,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       setState(() {
         _lastForecast = latestForecast;
+        _forecastMadeAt = madeAt;
         _lastCycle = lastCycle;
         _cyclesRecorded = cycles;
         _lowNotes = lowNotes;
@@ -608,6 +625,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _buildToday(),
                   const SizedBox(height: 16),
                   _buildOverview(),
+                  if (_forecastIsOld()) ...[
+                    const SizedBox(height: 16),
+                    _buildOldForecast(),
+                  ],
                   if (_lowNotes.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     _buildAttention(),
@@ -772,6 +793,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// The forecast normally updates every morning (06:13, backup 12:13).
+  /// Older than 30 hours means the daily update was missed.
+  bool _forecastIsOld() {
+    final t = _forecastMadeAt;
+    return t != null && DateTime.now().difference(t).inHours >= 30;
+  }
+
+  Widget _buildOldForecast() {
+    final t = _forecastMadeAt!;
+    final days = DateTime.now().difference(t).inHours ~/ 24;
+    return NoteBar(
+      color: AppColors.caution,
+      background: AppColors.bronzeSoft,
+      child: Text(
+        'The forecast was last updated on ${_prettyDay(isoDate(t))} '
+        '(${days <= 1 ? 'over a day' : '$days days'} ago). It normally updates '
+        'every morning, so the numbers may be out of date. If it stays old, '
+        'tell the developer.',
+        style: AppText.body,
       ),
     );
   }
