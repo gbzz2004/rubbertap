@@ -93,21 +93,6 @@ class AppText {
   );
 }
 
-IconData weatherIcon(String weather) {
-  switch (weather) {
-    case 'Sunny':
-      return Icons.wb_sunny_outlined;
-    case 'Cloudy':
-      return Icons.cloud_outlined;
-    case 'Rainy':
-      return Icons.water_drop_outlined;
-    case 'Windy':
-      return Icons.air;
-    default:
-      return Icons.wb_cloudy_outlined;
-  }
-}
-
 /// Small grey capital label that sits above a section.
 class SectionLabel extends StatelessWidget {
   final String text;

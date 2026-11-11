@@ -27,20 +27,20 @@ void main() {
 
     const expected = [
       ['2026-11-10', 'Block A', 'Sunny', 7.03],
-      ['2026-11-11', 'Block B', 'Sunny', 6.21],
+      ['2026-11-11', 'Block B', 'Sunny', 6.11],
       ['2026-11-12', 'Block A', 'Windy', 5.98],
-      ['2026-11-13', 'Block B', 'Rainy', 4.97],
+      ['2026-11-13', 'Block B', 'Rainy', 4.89],
       ['2026-11-14', 'Block A', 'Rainy', 4.29],
-      ['2026-11-15', 'Block B', 'Cloudy', 5.9],
+      ['2026-11-15', 'Block B', 'Cloudy', 5.8],
       ['2026-11-16', 'Block A', 'Rainy', 2.81],
-      ['2026-11-17', 'Block B', 'Sunny', 6.21],
+      ['2026-11-17', 'Block B', 'Sunny', 6.11],
       ['2026-11-18', 'Block A', 'Rainy', 5.11],
-      ['2026-11-19', 'Block B', 'Cloudy', 5.9],
+      ['2026-11-19', 'Block B', 'Cloudy', 5.8],
       ['2026-11-20', 'Block A', 'Windy', 5.98],
-      ['2026-11-21', 'Block B', 'Rainy', 2.99],
+      ['2026-11-21', 'Block B', 'Rainy', 2.94],
       ['2026-11-22', 'Block A', 'Cloudy', 6.68],
-      ['2026-11-23', 'Block B', 'Sunny', 6.21],
-      ['2026-11-24', 'Block B', 'Rainy', 5.18],
+      ['2026-11-23', 'Block B', 'Sunny', 6.11],
+      ['2026-11-24', 'Block B', 'Cloudy', 5.8],
     ];
 
     expect(days.length, 15);
@@ -121,21 +121,21 @@ void main() {
     expect(sum('Block B'), closeTo(44.0, 0.05));
   });
 
-  test('cycle weather label follows the import rule', () {
-    Map<String, double> d(double code, double rain, double wind) =>
-        {'code': code, 'rain': rain, 'wind': wind};
-    // 13 of 15 days with rain -> Rainy
-    final rainy = [for (var i = 0; i < 15; i++) d(61, i < 13 ? 5 : 0, 10)];
-    expect(labelCycleWeather(rainy, '1-15 Jun').label, 'Rainy');
-    expect(labelCycleWeather(rainy, '1-15 Jun').reason, contains('13 of 15 days'));
-    // dry and windy -> Windy
-    final windy = [for (var i = 0; i < 15; i++) d(3, 0, 35)];
-    expect(labelCycleWeather(windy, 'x').label, 'Windy');
-    // dry, calm, mostly clear -> Sunny
-    final sunny = [for (var i = 0; i < 15; i++) d(i < 10 ? 0 : 3, 0, 10)];
-    expect(labelCycleWeather(sunny, 'x').label, 'Sunny');
-    // dry, calm, mostly overcast -> Cloudy
-    final cloudy = [for (var i = 0; i < 15; i++) d(3, 0.2, 10)];
-    expect(labelCycleWeather(cloudy, 'x').label, 'Cloudy');
+  test('a day\'s weather words follow that day\'s own rain', () {
+    expect(dayWeatherText('Rainy', 17.8), 'Heavy rain (17.8 mm)');
+    expect(dayWeatherText('Rainy', 6.0), 'Rainy (6.0 mm)');
+    expect(dayWeatherText('Rainy', 3.0), 'Light rain (3.0 mm)');
+    expect(dayWeatherText('Rainy', 2.2), 'Cloudy, very light rain (2.2 mm)');
+    // Older saved days were labelled Rainy even with a trace of drizzle
+    expect(dayWeatherText('Rainy', 0.4), 'Cloudy, almost no rain (0.4 mm)');
+    expect(dayWeatherText('Sunny', 0), 'Sunny');
+    expect(dayWeatherText('Windy', null), 'Windy');
+    // With sunshine hours: a sunny day with a shower is not just "rain"
+    expect(dayWeatherText('Rainy', 3.0, 11.3), 'Sunny with light rain (3.0 mm)');
+    expect(dayWeatherText('Rainy', 2.2, 11.3), 'Sunny, very light rain (2.2 mm)');
+    expect(dayWeatherText('Rainy', 2.2, 3.0), 'Cloudy, very light rain (2.2 mm)');
+    expect(dayWeatherText('Cloudy', 0.8, 11.9), 'Sunny');
+    expect(dayWeatherText('Cloudy', 0.2, 2.0), 'Cloudy');
+    expect(dayWeatherText('Rainy', 17.8, 5.6), 'Heavy rain (17.8 mm)');
   });
 }

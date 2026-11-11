@@ -27,7 +27,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from app.ml.auto_cycle import backfill_recorded_cycles, ensure_current_cycle, manila_today
+from app.ml.auto_cycle import (backfill_recorded_cycles, ensure_current_cycle, manila_today,
+                               refresh_current_cycle_weather, sync_record_weather)
 from app.ml.models import run_all_models
 
 BLOCKS = ("Block A", "Block B")
@@ -56,6 +57,13 @@ def main():
             {"status": "running", "trigger": args.trigger}).execute().data
         run_id = row[0]["id"]
 
+        # Weather is real data, set from the weather service, never by hand.
+        # Before the models, so a new record's weather is used in this run.
+        try:
+            print(sync_record_weather(db, today))
+        except Exception as e:
+            print(f"Record weather: skipped, will retry next run ({e})")
+
     try:
         results = {}
         for block in BLOCKS:
@@ -78,6 +86,8 @@ def main():
         if args.dry_run:
             print(ensure_current_cycle(db, _best_totals(results), today, dry_run=True))
             print(backfill_recorded_cycles(db, today, dry_run=True))
+            print(sync_record_weather(db, today, dry_run=True))
+            print(refresh_current_cycle_weather(db, today, dry_run=True))
             print("Dry run: nothing written.")
             return
 
@@ -113,6 +123,9 @@ def main():
 
     # Fill the calendar for past cycles from their recorded totals
     print(backfill_recorded_cycles(db, today))
+
+    # Days that have passed in the current cycle: forecast -> real weather
+    print(refresh_current_cycle_weather(db, today))
 
 
 def _best_totals(results: dict) -> dict:

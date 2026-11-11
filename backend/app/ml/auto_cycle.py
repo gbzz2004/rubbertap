@@ -21,7 +21,8 @@ The app's "New cycle" button re-plans the current calendar cycle by hand.
 import os
 from datetime import date, datetime, timedelta, timezone
 
-from app.ml.cycle import build_daily_plan, cycle_bounds, fetch_daily_weather
+from app.ml.cycle import (WINDY_KMH, build_daily_plan, cycle_bounds,
+                         fetch_daily_weather, weather_label)
 
 MANILA = timezone(timedelta(hours=8))  # the Philippines has no daylight saving
 RECORDED = "recorded"
@@ -208,3 +209,85 @@ def backfill_recorded_cycles(db, today: date = None, dry_run: bool = False) -> s
         db.table("daily_predictions").delete().eq("cycle_id", cycle["id"]).execute()
         db.table("tapping_cycles").delete().eq("id", cycle["id"]).execute()
     return f"Recorded cycles: filled {len(todo)}, removed {len(stale)}."
+
+
+# ---------------------------------------------------------------------------
+# Real weather only: weather is collected by the system, never typed by a
+# person. (Panel feedback at the mock defense, 2026-11-10.)
+# ---------------------------------------------------------------------------
+
+def label_cycle_weather(days: list) -> str:
+    """One label for a cycle from its daily weather, saved on the record for
+    the models (the app shows daily weather only): Rainy if at least half
+    the days had >= 1 mm of rain, else Windy if at least half had wind >= 30
+    km/h, else Sunny if at least half were clear, else Cloudy."""
+    n = len(days)
+    if sum(d["rain"] >= 1.0 for d in days) * 2 >= n:
+        return "Rainy"
+    if sum(d["wind"] >= WINDY_KMH for d in days) * 2 >= n:
+        return "Windy"
+    if sum(d["code"] <= 1 for d in days) * 2 >= n:
+        return "Sunny"
+    return "Cloudy"
+
+
+def sync_record_weather(db, today: date = None, dry_run: bool = False) -> str:
+    """Set every harvest record's weather from the real weather of its cycle
+    (first day of the cycle up to the weigh date). Runs daily, so a record
+    saved without weather (offline) is filled in, and the stored weather
+    always matches the real data."""
+    today = today or manila_today()
+    records = [r for r in db.table("production_logs").select("id, date, weather, notes").execute().data
+               if r.get("notes") != "SYNTHETIC"]
+    if not records:
+        return "Record weather: no records."
+
+    def window(r):
+        end = min(_d(r["date"]), today)
+        return cycle_bounds(end)[0], end
+
+    weather = _weather_for(min(window(r)[0] for r in records), max(window(r)[1] for r in records))
+    changed = 0
+    for r in records:
+        start, end = window(r)
+        days = [weather[(start + timedelta(days=i)).isoformat()]
+                for i in range((end - start).days + 1)
+                if (start + timedelta(days=i)).isoformat() in weather]
+        if not days:
+            continue
+        label = label_cycle_weather(days)
+        if label != r.get("weather"):
+            changed += 1
+            if not dry_run:
+                db.table("production_logs").update({"weather": label}).eq("id", r["id"]).execute()
+    return f"Record weather: {changed} of {len(records)} {'would change' if dry_run else 'updated'}."
+
+
+def refresh_current_cycle_weather(db, today: date = None, dry_run: bool = False) -> str:
+    """The current cycle was planned with forecast weather. Once a day has
+    passed, replace its forecast weather with what really happened."""
+    today = today or manila_today()
+    start, end = cycle_bounds(today)
+    yesterday = today - timedelta(days=1)
+    if yesterday < start:
+        return "Current cycle weather: no past days yet."
+    cycles = (db.table("tapping_cycles").select("id").eq("status", "active")
+              .eq("start_date", start.isoformat()).eq("end_date", end.isoformat()).execute().data)
+    if not cycles:
+        return "Current cycle weather: no active plan."
+    weather = _weather_for(start, yesterday)
+    rows = (db.table("daily_predictions").select("id, tap_date, weather, temperature, rainfall")
+            .eq("cycle_id", cycles[0]["id"]).lt("tap_date", today.isoformat()).execute().data)
+    changed = 0
+    for row in rows:
+        w = weather.get(str(row["tap_date"])[:10])
+        if w is None:
+            continue
+        new = {"weather": weather_label(w["code"], w["wind"], w["rain"]),
+               "temperature": w["temp"], "rainfall": round(w["rain"], 2)}
+        if (new["weather"] != row["weather"] or row["rainfall"] is None
+                or abs(float(row["rainfall"]) - new["rainfall"]) > 0.01):
+            changed += 1
+            if not dry_run:
+                db.table("daily_predictions").update(new).eq("id", row["id"]).execute()
+    return f"Current cycle weather: {changed} past day(s) {'would change' if dry_run else 'updated to real weather'}."

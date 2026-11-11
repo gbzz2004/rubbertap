@@ -45,12 +45,15 @@ RAIN_PENALTY_PER_MM = 0.02  # each mm of rain lowers the weight by this much
 RAIN_MIN_WEIGHT = 0.40      # heavy rain never goes below this
 WINDY_KMH = 30.0
 
-# WMO weather codes (Open-Meteo) that mean drizzle / rain / showers / storm
-RAIN_CODES = {51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99}
+# A day counts as rainy from this much rain. The weather service reports a
+# trace of drizzle on almost every day (all 187 days, May-Nov 2026), so the
+# old rule "any rain code" labelled every single day Rainy.
+RAINY_MM = 1.0
 
 
-def weather_label(code: int, wind_kmh: float) -> str:
-    if code in RAIN_CODES:
+def weather_label(code: int, wind_kmh: float, rain_mm: float) -> str:
+    """Same rule as _weatherLabel() in frontend/lib/cycle_plan.dart."""
+    if rain_mm >= RAINY_MM:
         return "Rainy"
     if wind_kmh >= WINDY_KMH:
         return "Windy"
@@ -131,7 +134,7 @@ def build_daily_plan(start: date, block_totals: dict, weather: dict,
         if w is None:
             raise ValueError(f"No weather data for {d.isoformat()}")
 
-        label = weather_label(w["code"], w["wind"])
+        label = weather_label(w["code"], w["wind"], w["rain"])
         days.append({
             "day": n,
             "date": d.isoformat(),

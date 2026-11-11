@@ -10,8 +10,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.ml.auto_cycle import is_calendar_cycle, plan_window, recorded_cycle_totals  # noqa: E402
-from app.ml.cycle import build_daily_plan, cycle_bounds  # noqa: E402
+from app.ml.auto_cycle import (is_calendar_cycle, label_cycle_weather, plan_window,  # noqa: E402
+                               recorded_cycle_totals)
+from app.ml.cycle import build_daily_plan, cycle_bounds, weather_label  # noqa: E402
 
 D = date
 failures = []
@@ -67,6 +68,22 @@ for start, end in ((D(2026, 11, 1), D(2026, 11, 15)), (D(2026, 10, 16), D(2026, 
     for b, total in (("Block A", 60.0), ("Block B", 45.0)):
         check(f"{start}: {b} sums to its forecast",
               round(sum(x["predicted_yield"] for x in plan if x["block"] == b), 1), total)
+
+# Day weather label: by that day's own rain amount, not by "any drizzle"
+check("drizzle trace is not a rainy day", weather_label(51, 10, 0.4), "Cloudy")
+check("1 mm is rainy", weather_label(51, 10, 1.0), "Rainy")
+check("dry clear day", weather_label(0, 10, 0.0), "Sunny")
+check("dry windy day", weather_label(3, 35, 0.2), "Windy")
+
+# Cycle weather label: saved on each record for the models, not shown in the app
+def _day(code, rain, wind):
+    return {"code": code, "rain": rain, "wind": wind}
+
+
+check("rainy", label_cycle_weather([_day(61, 5 if i < 13 else 0, 10) for i in range(15)]), "Rainy")
+check("windy", label_cycle_weather([_day(3, 0, 35) for _ in range(15)]), "Windy")
+check("sunny", label_cycle_weather([_day(0 if i < 10 else 3, 0, 10) for i in range(15)]), "Sunny")
+check("cloudy", label_cycle_weather([_day(3, 0.2, 10) for _ in range(15)]), "Cloudy")
 
 if failures:
     print("FAILED:\n  " + "\n  ".join(failures))

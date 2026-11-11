@@ -58,7 +58,8 @@ data/                    Sir Arnel's real records; git-ignored on purpose
 Flutter + Supabase (data, Realtime, Storage for APKs; row-level security is
 OFF) + Python ML run daily by GitHub Actions (results saved in Supabase; the
 phone only reads them) + Open-Meteo as the ONE weather source (calendar,
-plan, tapping advice, harvest form, Weather tab, rain alerts; free, no key)
+plan, tapping advice, Weather tab, rain alerts; free, no key; the harvest
+form has no weather: each day's real weather is seen on the calendar)
 + MapLibre (maplibre_gl)
 with Esri satellite / OSM tiles and 3D block shapes.
 Release: app ID com.rubbertap.app, signed with the key in
@@ -107,6 +108,13 @@ and restart it.
 - Weather: no service has a station at the farm; all are model estimates on
   ~10-25 km grids, so tapping advice and rain alerts are general guidance.
   OpenWeatherMap was removed on 2026-11-10 (its key is no longer in the app).
+  Checked 2026-11-11 (May-Nov 2026): Open-Meteo reports some rain on all 187
+  days and agrees with NASA POWER on rainy/not for only 73% of days. So a day
+  is labelled Rainy from 1 mm (weather_label, both sides), and the calendar
+  words a day from that date's rain AND sunshine (dayWeatherText in
+  cycle_plan.dart; cut-offs 1 / 2.5 / 5 / 10 mm and 6 h of sun are the app's
+  own grouping, not an official scale). Saved labels of older recorded days
+  are still the old all-Rainy ones; the app words them from the rain amount.
 - The models run on GitHub Actions at 06:13 and 12:13 Manila (backup) and save
   results to Supabase; the app reads them, so it needs no PC. The app's
   refresh button only reloads saved results; a fresh run is started from the

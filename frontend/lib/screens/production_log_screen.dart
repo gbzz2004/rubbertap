@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../cycle_plan.dart';
 import '../main.dart';
 import '../record_store.dart';
 import '../theme.dart';
@@ -37,12 +36,6 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
     'Oldest first',
     'Highest harvest',
     'Lowest harvest',
-  ];
-  static const List<String> _weatherOptions = [
-    'Sunny',
-    'Cloudy',
-    'Rainy',
-    'Windy',
   ];
   static const List<String> _months = [
     'JAN',
@@ -275,8 +268,6 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
     final isEdit = editId != null;
     final yieldController =
         TextEditingController(text: existing?['yield_kg']?.toString() ?? '');
-    final notesController =
-        TextEditingController(text: existing?['notes']?.toString() ?? '');
     // The date is kept as a DateTime and shown as "9 Nov 2026"
     DateTime pickedDate =
         DateTime.tryParse(existing?['date']?.toString() ?? '') ??
@@ -284,35 +275,10 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
     final dateController =
         TextEditingController(text: _prettyDate(pickedDate));
     String block = existing?['block']?.toString() ?? 'Block A';
-    // New record: the weather is filled in from the REAL weather of the
-    // picked date's cycle (Open-Meteo, same rule as the imported records).
-    String weather = existing?['weather']?.toString() ?? '';
-    String weatherNote = '';
-    var weatherStarted = false;
-    var weatherRequest = 0;
-    var sheetOpen = true;
+    // No weather here: each day's real weather is shown on the calendar, and
+    // the daily job fills in the record's weather for the models
+    // (app/ml/auto_cycle.py: sync_record_weather).
     final formKey = GlobalKey<FormState>();
-
-    Future<void> loadWeather(StateSetter set) async {
-      final request = ++weatherRequest;
-      final forDate = pickedDate;
-      set(() => weatherNote =
-          'Checking the real weather for this cycle… (this can take up to a minute)');
-      try {
-        final cw = await fetchCycleWeather(forDate);
-        if (!sheetOpen || request != weatherRequest) return;
-        set(() {
-          weather = cw.label;
-          weatherNote = 'Real weather for ${cw.reason}. Change it if needed.';
-        });
-      } catch (e) {
-        debugPrint('Cycle weather lookup failed: $e');
-        if (!sheetOpen || request != weatherRequest) return;
-        set(() => weatherNote = weather.isEmpty
-            ? 'Could not check the weather (no internet). Please pick the weather for this cycle.'
-            : 'Could not check the weather for the new date. Check the choice above.');
-      }
-    }
 
     showModalBottomSheet(
       context: context,
@@ -320,12 +286,6 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
       useSafeArea: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          // A new record looks up its cycle's weather once, when it opens
-          if (!isEdit && !weatherStarted) {
-            weatherStarted = true;
-            WidgetsBinding.instance
-                .addPostFrameCallback((_) => loadWeather(setSheetState));
-          }
           return Padding(
           padding: EdgeInsets.fromLTRB(
             24,
@@ -369,8 +329,6 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                       if (picked != null) {
                         pickedDate = picked;
                         dateController.text = _prettyDate(picked);
-                        // A different cycle: look up its real weather
-                        loadWeather(setSheetState);
                       }
                     },
                     validator: (v) =>
@@ -409,43 +367,12 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                       return null;
                     },
                   ),
-                  const SizedBox(height: 18),
-                  const SectionLabel('Weather'),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _weatherOptions
-                        .map((w) => ChoicePill(
-                              label: w,
-                              icon: weatherIcon(w),
-                              selected: weather == w,
-                              onTap: () => setSheetState(() => weather = w),
-                            ))
-                        .toList(),
-                  ),
-                  if (weatherNote.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(weatherNote, style: AppText.caption),
-                  ],
-                  const SizedBox(height: 18),
-                  TextFormField(
-                    controller: notesController,
-                    maxLines: 2,
-                    decoration: fieldDecoration('Notes (optional)',
-                        icon: Icons.notes_outlined),
-                  ),
                   const SizedBox(height: 24),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: () async {
                         if (!formKey.currentState!.validate()) return;
-                        if (weather.isEmpty) {
-                          showNote(sheetContext, 'Please pick the weather.',
-                              error: true);
-                          return;
-                        }
                         final kg = double.parse(yieldController.text);
                         // Unusual amounts and repeat records go straight
                         // into the forecast, so ask before saving them
@@ -461,8 +388,6 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                           'date': _isoDate(pickedDate),
                           'block': block,
                           'yield_kg': kg,
-                          'weather': weather,
-                          'notes': notesController.text,
                         };
                         if (isEdit) {
                           await _updateLog(editId as int, data);
@@ -484,7 +409,7 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
         );
         },
       ),
-    ).whenComplete(() => sheetOpen = false);
+    );
   }
 
   // ------------------------------------------------------------------ build
@@ -683,9 +608,7 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
   Widget _buildRow(Map<String, dynamic> log) {
     final date = DateTime.tryParse(log['date'].toString());
     final block = log['block'].toString();
-    final weather = (log['weather'] ?? '').toString();
-    final notes = (log['notes'] ?? '').toString();
-    final kg = (log['yield_kg'] as num).toStringAsFixed(1);
+    final kg =(log['yield_kg'] as num).toStringAsFixed(1);
     final isPending = log['_pending'] == true;
 
     return InkWell(
@@ -737,30 +660,10 @@ class _ProductionLogScreenState extends State<ProductionLogScreen> {
                       Text(block, style: AppText.bodyStrong),
                     ],
                   ),
-                  const SizedBox(height: 4),
                   if (isPending) ...[
-                    const Tag('Waiting to send', color: AppColors.caution),
                     const SizedBox(height: 4),
+                    const Tag('Waiting to send', color: AppColors.caution),
                   ],
-                  Row(
-                    children: [
-                      if (weather.isNotEmpty) ...[
-                        Icon(weatherIcon(weather),
-                            size: 14, color: AppColors.inkSoft),
-                        const SizedBox(width: 4),
-                        Text(weather, style: AppText.caption),
-                      ],
-                      if (notes.isNotEmpty)
-                        Expanded(
-                          child: Text(
-                            weather.isEmpty ? notes : '  ·  $notes',
-                            style: AppText.caption,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                  ),
                 ],
               ),
             ),

@@ -404,6 +404,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return '${d.day} ${_months[d.month - 1].substring(0, 3)}';
   }
 
+  /// The weather row of a day's details: that date's own weather, plus an
+  /// honest note that it is an area estimate. [saved] is shown if there is
+  /// no internet.
+  Widget _weatherLine(DateTime day, String? saved) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        FutureBuilder<String>(
+          future: fetchDayWeather(day),
+          builder: (context, snap) => DetailLine(
+            label: 'Weather',
+            value: snap.hasData
+                ? snap.data!
+                : (snap.hasError ? (saved ?? 'Not available') : 'Checking…'),
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Weather is an estimate for the farm\'s area, not measured at the farm.',
+          style: AppText.caption,
+        ),
+        const SizedBox(height: 6),
+      ],
+    );
+  }
+
   void _showDayDetail(DateTime day) {
     final normalized = DateTime(day.year, day.month, day.day);
     final data = _calendarData[normalized];
@@ -414,6 +440,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final hasActual = data['actual_yield'] != null;
     final isPast = day.isBefore(DateTime.now());
     final estimated = data['estimated'] == true && data['cycle_total'] != null;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
 
     // A past day of a cycle whose total was never recorded
     if (data['missing'] == true) {
@@ -434,6 +462,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
               ),
               const SizedBox(height: 16),
+              // Every past day has its own weather, recorded or not
+              _weatherLine(normalized, null),
+              const SizedBox(height: 12),
               NoteBar(
                 color: AppColors.inkFaint,
                 background: AppColors.line.withValues(alpha: 0.4),
@@ -471,12 +502,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            DetailLine(
-              label: 'Weather',
-              value: data['rainfall'] is num && (data['rainfall'] as num) > 0
-                  ? '${data['weather'] ?? 'Unknown'} '
-                      '(${(data['rainfall'] as num).toStringAsFixed(1)} mm rain)'
-                  : (data['weather'] ?? 'Unknown').toString(),
+            // That date's own weather from the weather service (rain and
+            // sunshine). Without internet: the saved label, but never a
+            // saved forecast for a day that has already passed.
+            _weatherLine(
+              normalized,
+              data['weather'] == null ||
+                      (normalized.isBefore(today) && !estimated)
+                  ? null
+                  : dayWeatherText(data['weather'], data['rainfall']),
             ),
             if (data['predicted_yield'] != null)
               DetailLine(
@@ -537,60 +571,54 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Filled = backed by a real recorded harvest (a day measured, or a past
     // day estimated from its cycle's recorded total)
     final recorded = data['actual_yield'] != null || data['estimated'] == true;
-    final predicted = data['predicted_yield'];
-    final marked = today || selected;
-
-    return Container(
-      margin: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: recorded ? color : color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: marked
-              ? AppColors.ink
-              : color.withValues(alpha: recorded ? 1.0 : 0.35),
-          width: marked ? 1.6 : 1,
-        ),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            '${day.day}',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: recorded ? Colors.white : color,
-            ),
-          ),
-          if (predicted != null)
-            Text(
-              _kg(predicted),
-              style: TextStyle(
-                fontSize: 9,
-                color: recorded ? Colors.white70 : color,
-              ),
-            ),
-        ],
-      ),
+    // Only the date in a round marker; the kg and weather show on tap.
+    // Recorded = filled, forecast = soft tint, not recorded = plain grey.
+    return _dayMarker(
+      day,
+      fill: missing
+          ? null
+          : (recorded ? color : color.withValues(alpha: 0.14)),
+      textColor: recorded && !missing ? Colors.white : color,
+      bold: !missing,
+      marked: today || selected,
     );
   }
 
   Widget _plainDay(DateTime day, {bool today = false, bool selected = false}) {
-    final marked = today || selected;
-    return Container(
-      margin: const EdgeInsets.all(3),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        border: marked ? Border.all(color: AppColors.ink, width: 1.6) : null,
-      ),
-      child: Text(
-        '${day.day}',
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: marked ? FontWeight.w700 : FontWeight.w400,
-          color: AppColors.ink,
+    return _dayMarker(day,
+        textColor: AppColors.ink, bold: today || selected,
+        marked: today || selected);
+  }
+
+  /// One calendar day: the date in a circle. [marked] (today or the tapped
+  /// day) adds a dark ring around it.
+  Widget _dayMarker(
+    DateTime day, {
+    Color? fill,
+    required Color textColor,
+    bool bold = false,
+    bool marked = false,
+  }) {
+    return Center(
+      child: Container(
+        width: 40,
+        height: 40,
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: marked ? Border.all(color: AppColors.ink, width: 1.6) : null,
+        ),
+        child: Container(
+          alignment: Alignment.center,
+          decoration: BoxDecoration(color: fill, shape: BoxShape.circle),
+          child: Text(
+            '${day.day}',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
+              color: textColor,
+            ),
+          ),
         ),
       ),
     );
@@ -680,13 +708,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final rain = data?['rainfall'];
     final weighDay = today == cycleEnd;
 
-    final details = <String>[
-      if (expected != null) 'about ${_kg(expected)} kg expected',
-      if (weather != null)
-        rain is num && rain > 0
-            ? '$weather (${rain.toStringAsFixed(1)} mm rain today)'
-            : weather.toString(),
-    ];
+    final savedWeather =
+        weather != null ? dayWeatherText(weather, rain) : null;
 
     return Panel(
       padding: const EdgeInsets.all(18),
@@ -706,10 +729,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Expanded(child: Text('Tap $block', style: AppText.title)),
             ],
           ),
-          if (details.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(details.join(' · '), style: AppText.body),
-          ],
+          // Same wording as the calendar (saved label until it loads)
+          FutureBuilder<String>(
+            future: fetchDayWeather(today),
+            builder: (context, snap) {
+              final details = <String>[
+                if (expected != null) 'about ${_kg(expected)} kg expected',
+                if ((snap.data ?? savedWeather) != null)
+                  snap.data ?? savedWeather!,
+              ];
+              if (details.isEmpty) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(details.join(' · '), style: AppText.body),
+              );
+            },
+          ),
           const SizedBox(height: 4),
           Text(
             'Cycle ${_prettyDay(isoDate(cycleStart))} – ${_prettyDay(isoDate(cycleEnd))}',
@@ -860,7 +895,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _LegendDot(color: AppColors.forest, label: 'Block A'),
             _LegendDot(color: AppColors.bronze, label: 'Block B'),
             Text(
-              'Filled = from a recorded harvest · light = forecast · grey = not recorded',
+              'Filled = from a recorded harvest · light = forecast · grey = not recorded. '
+              'Tap a day to see its harvest and weather.',
               style: AppText.caption,
             ),
           ],
@@ -876,7 +912,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             calendarFormat: CalendarFormat.month,
             availableCalendarFormats: const {CalendarFormat.month: 'Month'},
             startingDayOfWeek: StartingDayOfWeek.sunday,
-            rowHeight: 56,
+            rowHeight: 48,
             daysOfWeekHeight: 28,
             onDaySelected: (selectedDay, focusedDay) {
               setState(() {

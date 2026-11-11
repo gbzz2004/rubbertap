@@ -28,10 +28,9 @@ const double _rainPenaltyPerMm = 0.02; // each mm lowers the weight this much
 const double _rainMinWeight = 0.40; // heavy rain never goes below this
 const double _windyKmh = 30.0;
 
-// WMO weather codes (Open-Meteo) that mean drizzle / rain / showers / storm
-const Set<int> _rainCodes = {
-  51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99,
-};
+// A day counts as rainy from this much rain. The weather service reports a
+// trace of drizzle on almost every day, so "any rain" made every day Rainy.
+const double _rainyMm = 1.0;
 
 const double farmLat = 7.762639;
 const double farmLon = 122.567028;
@@ -60,11 +59,48 @@ String blockForDay(int n) => blockADays.contains(n) ? 'Block A' : 'Block B';
   return (DateTime(d.year, d.month, 16), DateTime(d.year, d.month + 1, 0));
 }
 
-String _weatherLabel(int code, double windKmh) {
-  if (_rainCodes.contains(code)) return 'Rainy';
+/// Same rule as weather_label() in backend/app/ml/cycle.py.
+String _weatherLabel(int code, double windKmh, double rainMm) {
+  if (rainMm >= _rainyMm) return 'Rainy';
   if (windKmh >= _windyKmh) return 'Windy';
   if (code == 0 || code == 1) return 'Sunny';
   return 'Cloudy';
+}
+
+// A day with at least this much sunshine reads as sunny, even with a shower
+// (May-Nov 2026: 173 of 187 days had 6+ hours of sun, yet all had some rain).
+const double _sunnyHours = 6.0;
+
+// On screen, a day's total under this is not called a rain day: it reads
+// Sunny or Cloudy, and from 1 mm the small amount is still mentioned.
+const double _lightRainMm = 2.5;
+
+/// One day's weather in words, from THAT day's own rain and sunshine:
+/// "Heavy rain (17.8 mm)", "Rainy (6.0 mm)", "Sunny with light rain (3.0 mm)",
+/// "Light rain (3.0 mm)", "Sunny, very light rain (2.0 mm)", "Sunny",
+/// "Cloudy". [sunHours] is null when only the saved label and rain are known
+/// (no internet). The cut-offs are the app's own grouping of the day's total.
+String dayWeatherText(dynamic label, dynamic rainMm, [double? sunHours]) {
+  final rain = rainMm is num ? rainMm.toDouble() : 0.0;
+  final mm = '(${rain.toStringAsFixed(1)} mm)';
+  final sunny = sunHours != null && sunHours >= _sunnyHours;
+  if (rain >= 10) return 'Heavy rain $mm';
+  if (rain >= 5) return 'Rainy $mm';
+  if (rain >= _lightRainMm) {
+    return sunny ? 'Sunny with light rain $mm' : 'Light rain $mm';
+  }
+  // Under 2.5 mm: described by the sky (older saved days were all 'Rainy')
+  final String base;
+  if (label == 'Windy') {
+    base = 'Windy';
+  } else if (sunHours != null) {
+    base = sunny ? 'Sunny' : 'Cloudy';
+  } else {
+    base = (label == null || label == 'Rainy') ? 'Cloudy' : label.toString();
+  }
+  if (rain >= _rainyMm) return '$base, very light rain $mm';
+  // Without sunshine data, say why a saved 'Rainy' day reads as Cloudy
+  return sunHours == null && rain >= 0.1 ? '$base, almost no rain $mm' : base;
 }
 
 double _weatherWeight(String label, double rainMm) {
@@ -175,7 +211,8 @@ List<Map<String, dynamic>> buildDailyPlan(DateTime start,
     if (w == null) {
       throw PlanException('No weather forecast for ${isoDate(d)}.');
     }
-    final label = _weatherLabel(w['code']!.round(), w['wind']!);
+    final label =
+        _weatherLabel(w['code']!.round(), w['wind']!, w['rain'] ?? 0);
     days.add({
       'day': n,
       'date': isoDate(d),
@@ -207,56 +244,44 @@ List<Map<String, dynamic>> buildDailyPlan(DateTime start,
   return days;
 }
 
-/// The real weather of one farm cycle, as one label plus a short reason.
-class CycleWeather {
-  final String label; // Sunny, Cloudy, Rainy or Windy
-  final String reason; // e.g. "1-15 Jun: 15 of 15 days with rain (97 mm)"
-  const CycleWeather(this.label, this.reason);
+// One request per cycle half, remembered while the app is open
+final Map<String, Future<Map<String, String>>> _dayWeatherCache = {};
+
+/// The weather of one day at the farm in words, e.g. "Sunny with light rain
+/// (2.2 mm)": what the weather service has for THAT date (past days: what
+/// happened; today and the next ~2 weeks: the forecast). It is an estimate
+/// for the farm's area, not a measurement at the farm.
+Future<String> fetchDayWeather(DateTime day) async {
+  final (start, end) = cycleBounds(day);
+  final key = isoDate(start);
+  final days = await (_dayWeatherCache[key] ??= () async {
+    try {
+      return await _fetchCycleDays(start, end);
+    } catch (_) {
+      _dayWeatherCache.remove(key); // try again next time
+      rethrow;
+    }
+  }());
+  final text = days[isoDate(day)];
+  if (text == null) throw const PlanException('No weather data for this day.');
+  return text;
 }
 
-/// Labels a cycle from its daily weather, with the SAME rule used when Sir
-/// Arnel's records were imported (see data/README.md): Rainy if at least half
-/// the days had >= 1 mm of rain, else Windy if at least half had wind
-/// >= 30 km/h, else Sunny if at least half were clear, else Cloudy.
-CycleWeather labelCycleWeather(List<Map<String, double>> days, String period) {
-  final n = days.length;
-  final rainDays = days.where((d) => d['rain']! >= 1.0).length;
-  final windyDays = days.where((d) => d['wind']! >= _windyKmh).length;
-  final clearDays = days.where((d) => d['code']! <= 1).length;
-  final mm = days.fold<double>(0, (s, d) => s + d['rain']!);
-  final rainText =
-      '$rainDays of $n days with rain (${mm.toStringAsFixed(0)} mm)';
-  if (rainDays * 2 >= n) return CycleWeather('Rainy', '$period: $rainText');
-  if (windyDays * 2 >= n) {
-    return CycleWeather('Windy', '$period: $windyDays of $n windy days');
-  }
-  if (clearDays * 2 >= n) {
-    return CycleWeather('Sunny', '$period: $clearDays of $n clear days, $rainText');
-  }
-  return CycleWeather('Cloudy', '$period: mostly cloudy, $rainText');
-}
-
-/// The real weather at the farm for the cycle containing [weighDate], from
-/// its first day up to the weigh date (or today, if earlier). Uses Open-Meteo
-/// (the same source as the calendar). Throws if it cannot be downloaded.
-Future<CycleWeather> fetchCycleWeather(DateTime weighDate) async {
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+Future<Map<String, String>> _fetchCycleDays(DateTime start, DateTime end) async {
   final now = DateTime.now();
   final today = DateTime(now.year, now.month, now.day);
-  final (start, _) = cycleBounds(weighDate);
-  var end = DateTime(weighDate.year, weighDate.month, weighDate.day);
-  if (end.isAfter(today)) end = today;
-
-  // Recent days: forecast service (keeps ~3 months). Older: history archive.
+  final horizon = DateTime(today.year, today.month, today.day + 15);
+  if (start.isAfter(horizon)) {
+    throw const PlanException('No weather data for this day.');
+  }
+  if (end.isAfter(horizon)) end = horizon;
+  // Recent days and the forecast: forecast service (keeps ~3 months).
+  // Older: history archive, which can take ~15 s to wake up: be patient.
   final old = today.difference(end).inDays > 60;
-  // The free history archive can take ~15 s to wake up after a quiet spell,
-  // and farm signal is slow: be patient (measured 2026-11-10).
   final dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 20),
     receiveTimeout: const Duration(seconds: 40),
   ));
-  // The free service sometimes answers slowly: try twice before giving up
   Response<dynamic>? resp;
   for (var attempt = 0; resp == null; attempt++) {
     try {
@@ -267,7 +292,8 @@ Future<CycleWeather> fetchCycleWeather(DateTime weighDate) async {
         queryParameters: {
           'latitude': farmLat,
           'longitude': farmLon,
-          'daily': 'weather_code,precipitation_sum,wind_speed_10m_max',
+          'daily': 'weather_code,precipitation_sum,wind_speed_10m_max,'
+              'sunshine_duration',
           'timezone': 'Asia/Manila',
           'start_date': isoDate(start),
           'end_date': isoDate(end),
@@ -279,19 +305,19 @@ Future<CycleWeather> fetchCycleWeather(DateTime weighDate) async {
     }
   }
   final daily = Map<String, dynamic>.from(resp.data['daily'] as Map);
-  final codes = daily['weather_code'] as List;
-  final days = <Map<String, double>>[];
-  for (var i = 0; i < codes.length; i++) {
-    if (codes[i] == null) continue; // not available yet
-    days.add({
-      'code': (codes[i] as num).toDouble(),
-      'rain': ((daily['precipitation_sum'] as List)[i] as num?)?.toDouble() ?? 0,
-      'wind': ((daily['wind_speed_10m_max'] as List)[i] as num?)?.toDouble() ?? 0,
-    });
+  final dates = daily['time'] as List;
+  final out = <String, String>{};
+  for (var i = 0; i < dates.length; i++) {
+    final code = ((daily['weather_code'] as List)[i] as num?)?.round();
+    if (code == null) continue; // not available yet
+    final rain =
+        ((daily['precipitation_sum'] as List)[i] as num?)?.toDouble() ?? 0;
+    final wind =
+        ((daily['wind_speed_10m_max'] as List)[i] as num?)?.toDouble() ?? 0;
+    final sunSeconds = (daily['sunshine_duration'] as List?)?[i] as num?;
+    out[dates[i].toString()] = dayWeatherText(
+        _weatherLabel(code, wind, rain), rain,
+        sunSeconds == null ? null : sunSeconds / 3600);
   }
-  if (days.isEmpty) throw const PlanException('No weather data for this cycle.');
-  final period = start.month == end.month
-      ? '${start.day}–${end.day} ${months[end.month - 1]}'
-      : '${start.day} ${months[start.month - 1]} – ${end.day} ${months[end.month - 1]}';
-  return labelCycleWeather(days, period);
+  return out;
 }
