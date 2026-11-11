@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'theme.dart';
+import 'settings_store.dart';
 import 'rain_alerts.dart';
 import 'update_check.dart';
 
@@ -25,6 +26,9 @@ void main() async {
     await RainAlertService.syncBackgroundChecks();
   } catch (_) {}
 
+  // Saved settings (Dark mode), before the first screen is drawn
+  await AppPrefs.load();
+
   runApp(const RubberTapApp());
 }
 
@@ -35,11 +39,20 @@ class RubberTapApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'RubberTap',
-      debugShowCheckedModeBanner: false,
-      theme: buildAppTheme(),
-      home: const MainScreen(),
+    // The colours are plain values, not theme lookups, so when Dark mode
+    // changes the theme is rebuilt and the screens are created again (the
+    // key below). The open tab is remembered across that.
+    return ValueListenableBuilder<bool>(
+      valueListenable: AppPrefs.darkMode,
+      builder: (context, dark, _) {
+        AppColors.dark = dark;
+        return MaterialApp(
+          title: 'RubberTap',
+          debugShowCheckedModeBanner: false,
+          theme: buildAppTheme(),
+          home: MainScreen(key: ValueKey<bool>(dark)),
+        );
+      },
     );
   }
 }
@@ -52,11 +65,15 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  int _currentIndex = 0;
+  // Static: kept when the screens are rebuilt for a Dark mode change
+  static int _currentIndex = 0;
+  static bool _startChecksDone = false;
 
   @override
   void initState() {
     super.initState();
+    if (_startChecksDone) return; // once per app start, not per rebuild
+    _startChecksDone = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // First start only: Android's own "Allow notifications?" prompt.
       // Rain alerts follow that choice (changed later in phone Settings).
@@ -76,28 +93,28 @@ class _MainScreenState extends State<MainScreen> {
     const WeatherScreen(),
   ];
 
-  final List<NavigationDestination> _destinations = const [
-    NavigationDestination(
+  final List<NavigationDestination> _destinations = [
+    const NavigationDestination(
       icon: Icon(Icons.dashboard_outlined),
       selectedIcon: Icon(Icons.dashboard),
       label: 'Dashboard',
     ),
-    NavigationDestination(
+    const NavigationDestination(
       icon: Icon(Icons.edit_note_outlined),
       selectedIcon: Icon(Icons.edit_note),
       label: 'Production',
     ),
-    NavigationDestination(
+    const NavigationDestination(
       icon: Icon(Icons.map_outlined),
       selectedIcon: Icon(Icons.map),
       label: 'GIS Map',
     ),
-    NavigationDestination(
+    const NavigationDestination(
       icon: Icon(Icons.auto_graph_outlined),
       selectedIcon: Icon(Icons.auto_graph),
       label: 'Forecast',
     ),
-    NavigationDestination(
+    const NavigationDestination(
       icon: Icon(Icons.wb_sunny_outlined),
       selectedIcon: Icon(Icons.wb_sunny),
       label: 'Weather',
@@ -116,8 +133,11 @@ class _MainScreenState extends State<MainScreen> {
         onDestinationSelected: (index) {
           setState(() => _currentIndex = index);
         },
-        backgroundColor: Colors.white,
-        indicatorColor: const Color(0xFF2E7D32).withValues(alpha: 0.1),
+        // Unchanged in light mode; dark mode needs a dark bar
+        backgroundColor: AppColors.dark ? AppColors.surface : Colors.white,
+        indicatorColor: AppColors.dark
+            ? AppColors.forest.withValues(alpha: 0.22)
+            : const Color(0xFF2E7D32).withValues(alpha: 0.1),
         destinations: _destinations,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
       ),

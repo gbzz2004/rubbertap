@@ -30,9 +30,18 @@ There is NO login or registration, on purpose.
 - Farm coordinates are set in the code (Block A's first corner is the reference point).
 
 ## Folder layout (C:\Users\Administrator\Desktop\rubbertap)
+tools/make_icon.py       draws the launcher icon (python tools/make_icon.py install)
 frontend/                Flutter app (Android)
   lib/main.dart          theme + bottom navigation (DO NOT change the bottom nav)
-  lib/theme.dart         palette, text styles, shared widgets (Panel, Figure, Tag...)
+  lib/theme.dart         palette, text styles, shared widgets (Panel, Figure, Tag...).
+                         AppColors/AppText are getters that follow AppColors.dark
+                         (Dark mode), so never put them in `const` widgets.
+                         Fonts: Outfit (headings) + Work Sans, bundled in assets/fonts
+  lib/motion.dart        Reveal (ease-in), AnimatedCount, HeroPanel (coloured card)
+  lib/weather_sky.dart   animated sky behind the Weather tab (follows the weather;
+                         --dart-define=SKY=Rain:day previews a sky, off by default)
+  lib/settings_store.dart saved settings (Dark mode); screens/settings_screen.dart
+                         is the gear icon at the top right of every tab
   lib/rain_alerts.dart   rain notifications (WorkManager + local notifications)
   lib/screens/           dashboard, production_log, gis, forecast, weather
   lib/cycle_plan.dart    cycle calendar + daily plan (must match backend cycle.py)
@@ -116,8 +125,8 @@ and restart it.
   own grouping, not an official scale). Saved labels of older recorded days
   are still the old all-Rainy ones; the app words them from the rain amount.
 - The models run on GitHub Actions at 06:13 and 12:13 Manila (backup) and save
-  results to Supabase; the app reads them, so it needs no PC. The app's
-  refresh button only reloads saved results; a fresh run is started from the
+  results to Supabase; the app reads them, so it needs no PC. Pulling a screen
+  down only reloads saved results; a fresh run is started from the
   GitHub Actions tab (an Edge Function trigger was planned, not built).
 
 ## Conventions

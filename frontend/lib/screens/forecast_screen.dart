@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../main.dart';
 import '../theme.dart';
+import 'settings_screen.dart';
 
 double _num(dynamic v) => (v as num).toDouble();
 
@@ -79,39 +81,33 @@ class _ForecastScreenState extends State<ForecastScreen> {
   static const Map<String, _ModelInfo> _info = {
     'SARIMA': _ModelInfo(
       friendlyName: 'Seasonal Pattern',
-      howItWorks:
-          'Looks at how your harvests rose and fell in the past, including seasons that repeat, and carries that pattern forward into the next cycle.',
+      howItWorks: 'Looks at how your harvests rose and fell in the past, including seasons that repeat, and carries that pattern forward into the next cycle.',
       looksAt: 'Your past harvest totals and how they change over the year.',
       icon: Icons.show_chart,
     ),
     'LSTM': _ModelInfo(
       friendlyName: 'Learning Program',
-      howItWorks:
-          'A computer program that studies your past harvests, the time of year and the weather, and finds patterns on its own. A bit like an experienced farmer who remembers many seasons.',
+      howItWorks: 'A computer program that studies your past harvests, the time of year and the weather, and finds patterns on its own. A bit like an experienced farmer who remembers many seasons.',
       looksAt: 'Past harvests, the time of year and the weather.',
       icon: Icons.psychology,
     ),
     'SARIMA+LSTM': _ModelInfo(
       friendlyName: 'Seasonal + Learning Program',
-      howItWorks:
-          'Works in two steps. First it follows the seasonal pattern of your harvests. Then a learning program looks at where that pattern was wrong in the past and corrects for it.',
-      looksAt:
-          'Past harvests and seasons first, then its own past mistakes and the time of year.',
+      howItWorks: 'Works in two steps. First it follows the seasonal pattern of your harvests. Then a learning program looks at where that pattern was wrong in the past and corrects for it.',
+      looksAt: 'Past harvests and seasons first, then its own past mistakes and the time of year.',
       icon: Icons.layers,
     ),
     'SARIMA+LightGBM': _ModelInfo(
       friendlyName: 'Seasonal + Decision Trees',
-      howItWorks:
-          'Works in two steps. First it follows the seasonal pattern of your harvests. Then a set of simple yes-or-no questions (like "was it a rainy month?") adjusts for what the pattern missed.',
-      looksAt:
-          'Past harvests and seasons first, then the time of year, the weather and the last two cycles.',
+      howItWorks: 'Works in two steps. First it follows the seasonal pattern of your harvests. Then a set of simple yes-or-no questions (like "was it a rainy month?") adjusts for what the pattern missed.',
+      looksAt: 'Past harvests and seasons first, then the time of year, the weather and the last two cycles.',
       icon: Icons.account_tree,
     ),
     'Random Forest': _ModelInfo(
       friendlyName: 'Decision Forest',
-      howItWorks:
-          'Asks many small yes-or-no questions about past harvests, such as the month, the weather and the last cycle\'s result, then averages all the answers.',
-      looksAt: 'Past harvests, the time of year, the weather and recent cycles.',
+      howItWorks: 'Asks many small yes-or-no questions about past harvests, such as the month, the weather and the last cycle\'s result, then averages all the answers.',
+      looksAt:
+          'Past harvests, the time of year, the weather and recent cycles.',
       icon: Icons.forest,
     ),
   };
@@ -165,17 +161,19 @@ class _ForecastScreenState extends State<ForecastScreen> {
     final list = List<Map<String, dynamic>>.from(runs);
     if (list.isEmpty) {
       throw const _NoForecast(
-          'No forecast has been made yet. It is updated every morning at 6:00.');
+        'No forecast has been made yet. It is updated every morning at 6:00.',
+      );
     }
     final results = Map<String, dynamic>.from(list.first['results'] as Map);
     final blockResult = results[block];
     if (blockResult == null) {
       throw _NoForecast(
-          'There are not enough saved harvest records for $block yet. Add more records in the Production tab. The forecast is updated every morning.');
+        'There are not enough saved harvest records for $block yet. Add more records in the Production tab. The forecast is updated every morning.',
+      );
     }
     final api = Map<String, dynamic>.from(blockResult as Map);
-    final madeAt =
-        DateTime.parse(list.first['created_at'].toString()).toLocal();
+    final madeAt = DateTime.parse(list.first['created_at'].toString())
+        .toLocal();
 
     // The farm's own numbers, used to explain the forecast in plain words
     double? lastKg;
@@ -191,7 +189,8 @@ class _ForecastScreenState extends State<ForecastScreen> {
       if (rows.isNotEmpty) {
         lastKg = _num(rows.first['yield_kg']);
         lastDate = rows.first['date'].toString();
-        avgKg = rows.fold<double>(0, (s, l) => s + _num(l['yield_kg'])) /
+        avgKg =
+            rows.fold<double>(0, (s, l) => s + _num(l['yield_kg'])) /
             rows.length;
       }
     } catch (_) {
@@ -279,8 +278,20 @@ class _ForecastScreenState extends State<ForecastScreen> {
     final last = d.lastKg;
     if (last == null || last <= 0) return null;
     final pct = (forecast - last) / last * 100;
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
     final lastDay = DateTime.tryParse(d.lastDate ?? '');
     final when = lastDay == null
         ? 'your last recorded cycle'
@@ -295,13 +306,25 @@ class _ForecastScreenState extends State<ForecastScreen> {
   /// When the models made this forecast, e.g. "Updated today, 6:02 AM".
   String _updatedText(DateTime t) {
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     final now = DateTime.now();
-    final days = DateTime(now.year, now.month, now.day)
-        .difference(DateTime(t.year, t.month, t.day))
-        .inDays;
+    final days = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).difference(DateTime(t.year, t.month, t.day)).inDays;
     final hour = t.hour % 12 == 0 ? 12 : t.hour % 12;
     final time =
         '$hour:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'AM' : 'PM'}';
@@ -317,24 +340,24 @@ class _ForecastScreenState extends State<ForecastScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Harvest forecast'),
-        actions: [
-          IconButton(
-            tooltip: 'Reload forecast',
-            icon: const Icon(Icons.refresh, size: 22),
-            onPressed: _isLoading ? null : () => _load(),
-          ),
-        ],
+        actions: const [SettingsButton(), SizedBox(width: 4)],
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-        children: [
-          _buildBlockSelector(),
-          const SizedBox(height: 20),
-          // A reload keeps the current numbers on screen until the new ones arrive
-          if (_isLoading && _data == null) _buildLoading(),
-          if (_error != null) _buildError(),
-          if (_data != null) ..._buildResults(_data!),
-        ],
+      // Pull down to reload (the refresh icon became Settings)
+      body: RefreshIndicator(
+        color: AppColors.forest,
+        onRefresh: _load,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+          children: [
+            _buildBlockSelector(),
+            const SizedBox(height: 20),
+            // A reload keeps the current numbers on screen until the new ones arrive
+            if (_isLoading && _data == null) _buildLoading(),
+            if (_error != null) _buildError(),
+            if (_data != null) ..._buildResults(_data!),
+          ],
+        ),
       ),
     );
   }
@@ -358,15 +381,18 @@ class _ForecastScreenState extends State<ForecastScreen> {
   }
 
   Widget _buildLoading() {
-    return const Panel(
-      padding: EdgeInsets.all(28),
+    return Panel(
+      padding: const EdgeInsets.all(28),
       child: Column(
         children: [
-          CircularProgressIndicator(strokeWidth: 2),
-          SizedBox(height: 18),
-          Text('Loading the latest forecast…',
-              style: AppText.heading, textAlign: TextAlign.center),
-          SizedBox(height: 6),
+          const CircularProgressIndicator(strokeWidth: 2),
+          const SizedBox(height: 18),
+          Text(
+            'Loading the latest forecast…',
+            style: AppText.heading,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 6),
           Text(
             'The forecast is updated every morning.',
             style: AppText.caption,
@@ -401,8 +427,10 @@ class _ForecastScreenState extends State<ForecastScreen> {
         .map((k) => Map<String, dynamic>.from(d.api[k] as Map))
         .toList();
     final bestName = d.api['best_model'] as String;
-    final best = models.firstWhere((m) => m['model'] == bestName,
-        orElse: () => models.first);
+    final best = models.firstWhere(
+      (m) => m['model'] == bestName,
+      orElse: () => models.first,
+    );
     final bestInfo = _infoFor(best['model'].toString());
     final bestForecast = _num(best['forecast_kg']);
     final compare = _compareText(bestForecast, d);
@@ -421,10 +449,12 @@ class _ForecastScreenState extends State<ForecastScreen> {
         evaluation is Map && (evaluation['synthetic_rows'] ?? 0) > 0;
 
     // With few cycles the best method falls back to the average: say why
-    final nCycles =
-        evaluation is Map ? (evaluation['n_cycles'] as num?)?.toInt() : null;
+    final nCycles = evaluation is Map
+        ? (evaluation['n_cycles'] as num?)?.toInt()
+        : null;
     final avg = d.avgKg;
-    final sameAsAverage = !_wasChecked(best) &&
+    final sameAsAverage =
+        !_wasChecked(best) &&
         avg != null &&
         avg > 0 &&
         (bestForecast - avg).abs() / avg < 0.01;
@@ -434,7 +464,7 @@ class _ForecastScreenState extends State<ForecastScreen> {
 
     return [
       if (sampleData) ...[
-        const NoteBar(
+        NoteBar(
           color: AppColors.alert,
           background: AppColors.alertSoft,
           child: Text(
@@ -458,30 +488,43 @@ class _ForecastScreenState extends State<ForecastScreen> {
         ),
         const SizedBox(height: 16),
       ],
-      // Main forecast
-      Panel(
+      // Main forecast: the number on the block's own colour, then the
+      // explanation in a plain card under it
+      Reveal(
+        child: SizedBox(
+          width: double.infinity,
+          child: HeroPanel(
+            bronze: _selectedBlock == 'Block B',
+            padding: const EdgeInsets.fromLTRB(22, 22, 22, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Next 15-day harvest · $_selectedBlock',
+                    style: OnHero.label),
+                const SizedBox(height: 12),
+                AnimatedCount(
+                  // a new key restarts the count when the block changes
+                  key: ValueKey<String>(_selectedBlock),
+                  value: bestForecast,
+                  suffix: ' kg',
+                  style: OnHero.figure.copyWith(fontSize: 52),
+                ),
+                const SizedBox(height: 8),
+                Text('Forecast by ${bestInfo.friendlyName}',
+                    style: OnHero.caption),
+              ],
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(height: 14),
+      Reveal(
+        index: 1,
+        child: Panel(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SectionLabel('Next 15-day harvest · $_selectedBlock'),
-            const SizedBox(height: 10),
-            Text(
-              '${bestForecast.toStringAsFixed(1)} kg',
-              style: const TextStyle(
-                fontFamily: AppText.serif,
-                fontSize: 46,
-                fontWeight: FontWeight.w600,
-                color: AppColors.ink,
-                height: 1.05,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text('Forecast by ${bestInfo.friendlyName}',
-                style: AppText.caption),
-            const SizedBox(height: 16),
-            const Divider(),
-            const SizedBox(height: 14),
             if (compare != null) ...[
               Text(compare, style: AppText.body),
               const SizedBox(height: 8),
@@ -499,10 +542,12 @@ class _ForecastScreenState extends State<ForecastScreen> {
               ),
             ],
             const SizedBox(height: 10),
-            Text(_updatedText(d.fetchedAt),
-                style:
-                    const TextStyle(fontSize: 11, color: AppColors.inkFaint)),
+            Text(
+              _updatedText(d.fetchedAt),
+              style: TextStyle(fontSize: 12, color: AppColors.inkFaint),
+            ),
           ],
+        ),
         ),
       ),
       const SizedBox(height: 28),
@@ -510,18 +555,23 @@ class _ForecastScreenState extends State<ForecastScreen> {
       // Methods
       const SectionLabel('Compare the methods'),
       const SizedBox(height: 4),
-      const Text('Tap any method to see how it reached its forecast.',
-          style: AppText.caption),
+      Text(
+        'Tap any method to see how it reached its forecast.',
+        style: AppText.caption,
+      ),
       const SizedBox(height: 12),
-      Panel(
-        padding: EdgeInsets.zero,
-        child: Column(
-          children: [
-            for (var i = 0; i < models.length; i++) ...[
-              if (i > 0) const Divider(),
-              _buildModelRow(models[i], models[i]['model'] == bestName, d),
+      Reveal(
+        index: 2,
+        child: Panel(
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: [
+              for (var i = 0; i < models.length; i++) ...[
+                if (i > 0) const Divider(),
+                _buildModelRow(models[i], models[i]['model'] == bestName, d),
+              ],
             ],
-          ],
+          ),
         ),
       ),
 
@@ -530,7 +580,7 @@ class _ForecastScreenState extends State<ForecastScreen> {
         const SizedBox(height: 28),
         const SectionLabel('How far off each method was'),
         const SizedBox(height: 4),
-        const Text(
+        Text(
           'Typical miss on past harvests, in kg. A shorter bar is closer to what really happened.',
           style: AppText.caption,
         ),
@@ -555,7 +605,8 @@ class _ForecastScreenState extends State<ForecastScreen> {
                             : AppColors.inkFaint.withValues(alpha: 0.5),
                         width: 22,
                         borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(4)),
+                          top: Radius.circular(4),
+                        ),
                       ),
                     ],
                   );
@@ -571,9 +622,13 @@ class _ForecastScreenState extends State<ForecastScreen> {
                         }
                         return Padding(
                           padding: const EdgeInsets.only(top: 6),
-                          child: Text(_chartLabels[i],
-                              style: const TextStyle(
-                                  fontSize: 9, color: AppColors.inkSoft)),
+                          child: Text(
+                            _chartLabels[i],
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.inkSoft,
+                            ),
+                          ),
                         );
                       },
                     ),
@@ -584,21 +639,25 @@ class _ForecastScreenState extends State<ForecastScreen> {
                       reservedSize: 36,
                       getTitlesWidget: (value, meta) => Text(
                         value.toStringAsFixed(1),
-                        style: const TextStyle(
-                            fontSize: 9, color: AppColors.inkSoft),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.inkSoft,
+                        ),
                       ),
                     ),
                   ),
                   topTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false)),
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
                   rightTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false)),
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
                 ),
                 gridData: FlGridData(
                   show: true,
                   drawVerticalLine: false,
                   getDrawingHorizontalLine: (value) =>
-                      const FlLine(color: AppColors.line, strokeWidth: 1),
+                      FlLine(color: AppColors.line, strokeWidth: 1),
                 ),
                 borderData: FlBorderData(show: false),
               ),
@@ -617,9 +676,11 @@ class _ForecastScreenState extends State<ForecastScreen> {
 
     return InkWell(
       onTap: () => untrained
-          ? showNote(context,
+          ? showNote(
+              context,
               '"${info.friendlyName}" needs more recorded cycles before it can '
-              'learn. It will start working as more harvests are recorded.')
+              'learn. It will start working as more harvests are recorded.',
+            )
           : _showDetails(m, d, isBest),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -639,19 +700,24 @@ class _ForecastScreenState extends State<ForecastScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(info.friendlyName, style: AppText.bodyStrong),
-                      Text(m['model'].toString(),
-                          style: const TextStyle(
-                              fontSize: 11, color: AppColors.inkFaint)),
+                      Text(
+                        m['model'].toString(),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.inkFaint,
+                        ),
+                      ),
                     ],
                   ),
                 ),
                 Text(
-                    untrained
-                        ? '—'
-                        : '${_num(m['forecast_kg']).toStringAsFixed(1)} kg',
-                    style: AppText.heading),
+                  untrained
+                      ? '—'
+                      : '${_num(m['forecast_kg']).toStringAsFixed(1)} kg',
+                  style: AppText.heading,
+                ),
                 const SizedBox(width: 4),
-                const Icon(Icons.chevron_right, color: AppColors.inkFaint),
+                Icon(Icons.chevron_right, color: AppColors.inkFaint),
               ],
             ),
             const SizedBox(height: 10),
@@ -661,10 +727,13 @@ class _ForecastScreenState extends State<ForecastScreen> {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 if (isBest)
-                  Tag(checked ? 'Closest match' : 'Used for the forecast',
-                      color: AppColors.forest, filled: true),
+                  Tag(
+                    checked ? 'Closest match' : 'Used for the forecast',
+                    color: AppColors.forest,
+                    filled: true,
+                  ),
                 if (untrained)
-                  const Tag('Not enough data yet', color: AppColors.inkFaint)
+                  Tag('Not enough data yet', color: AppColors.inkFaint)
                 else
                   Tag(_reliabilityLabel(m), color: _reliabilityColor(m)),
                 if (checked)
@@ -721,9 +790,13 @@ class _ForecastScreenState extends State<ForecastScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(info.friendlyName, style: AppText.title),
-                      Text('Technical name: ${m['model']}',
-                          style: const TextStyle(
-                              fontSize: 11, color: AppColors.inkFaint)),
+                      Text(
+                        'Technical name: ${m['model']}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.inkFaint,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -731,8 +804,11 @@ class _ForecastScreenState extends State<ForecastScreen> {
             ),
             if (isBest) ...[
               const SizedBox(height: 14),
-              const Tag('Closest match to your past harvests',
-                  color: AppColors.forest, filled: true),
+              Tag(
+                'Closest match to your past harvests',
+                color: AppColors.forest,
+                filled: true,
+              ),
             ],
             const SizedBox(height: 22),
             _Section(
@@ -768,12 +844,13 @@ class _ForecastScreenState extends State<ForecastScreen> {
                         _Point(missText),
                         _Point(patternText),
                         _Point(
-                            'Its bigger misses were around ${rmse.toStringAsFixed(1)} kg.'),
+                          'Its bigger misses were around ${rmse.toStringAsFixed(1)} kg.',
+                        ),
                         const SizedBox(height: 6),
                         Tag(_reliabilityLabel(m), color: _reliabilityColor(m)),
                       ],
                     )
-                  : const Text(
+                  : Text(
                       'There are not enough past records to check this method yet.',
                       style: AppText.body,
                     ),
@@ -789,10 +866,13 @@ class _ForecastScreenState extends State<ForecastScreen> {
               ),
               const SizedBox(height: 16),
             ],
-            const Text(
+            Text(
               'Accuracy is measured on the harvest records saved in the app and updates as new cycles are recorded. A forecast is a guide, not a promise: weather and tapping conditions can change the real result.',
               style: TextStyle(
-                  fontSize: 11, color: AppColors.inkFaint, height: 1.4),
+                fontSize: 12,
+                color: AppColors.inkFaint,
+                height: 1.4,
+              ),
             ),
           ],
         ),
@@ -813,11 +893,7 @@ class _Section extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SectionLabel(title),
-          const SizedBox(height: 8),
-          child,
-        ],
+        children: [SectionLabel(title), const SizedBox(height: 8), child],
       ),
     );
   }
@@ -835,8 +911,8 @@ class _Point extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 8, right: 10),
+          Padding(
+            padding: const EdgeInsets.only(top: 8, right: 10),
             child: Icon(Icons.circle, size: 5, color: AppColors.inkFaint),
           ),
           Expanded(child: Text(text, style: AppText.body)),

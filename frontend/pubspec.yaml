@@ -1,7 +1,7 @@
 name: frontend
 description: RubberTap - Rubber Farm Yield Forecasting App
 publish_to: 'none'
-version: 1.0.10+11
+version: 1.0.11+12
 
 environment:
   sdk: '^3.13.0'
@@ -32,3 +32,23 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # Bundled (not downloaded) so the app looks the same with no signal.
+  # Both are open fonts (SIL OFL): see assets/fonts/*-OFL.txt
+  fonts:
+    - family: Outfit
+      fonts:
+        - asset: assets/fonts/Outfit-500.ttf
+          weight: 500
+        - asset: assets/fonts/Outfit-600.ttf
+          weight: 600
+        - asset: assets/fonts/Outfit-700.ttf
+          weight: 700
+    - family: WorkSans
+      fonts:
+        - asset: assets/fonts/WorkSans-400.ttf
+          weight: 400
+        - asset: assets/fonts/WorkSans-500.ttf
+          weight: 500
+        - asset: assets/fonts/WorkSans-600.ttf
+          weight: 600

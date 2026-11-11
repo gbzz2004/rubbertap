@@ -5,6 +5,7 @@ import '../main.dart';
 import '../record_store.dart';
 import '../tapping_advice.dart';
 import '../theme.dart';
+import 'settings_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -240,7 +241,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
         surfaceTintColor: Colors.transparent,
-        title: const Text('A cycle is already running', style: AppText.heading),
+        title: Text('A cycle is already running', style: AppText.heading),
         content: Text(
           'This cycle is already planned until ${until.day} ${_months[until.month - 1]}. '
           'Make a fresh plan for it with the latest forecast and weather?\n\n'
@@ -250,7 +251,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Keep current',
+            child: Text('Keep current',
                 style: TextStyle(color: AppColors.inkSoft)),
           ),
           ElevatedButton(
@@ -333,8 +334,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('New 15-day cycle planned from the latest forecast.'),
+          SnackBar(
+            content: const Text('New 15-day cycle planned from the latest forecast.'),
             backgroundColor: AppColors.good,
           ),
         );
@@ -421,7 +422,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
         const SizedBox(height: 6),
-        const Text(
+        Text(
           'Weather is an estimate for the farm\'s area, not measured at the farm.',
           style: AppText.caption,
         ),
@@ -455,7 +456,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               Row(
                 children: [
-                  const Tag('Not recorded', color: AppColors.inkFaint),
+                  Tag('Not recorded', color: AppColors.inkFaint),
                   const SizedBox(width: 12),
                   Text('${day.day} ${_months[day.month - 1]} ${day.year}',
                       style: AppText.heading),
@@ -540,7 +541,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(height: 16),
               // One place to record harvests: the Production tab's cycle
               // totals are what the forecast learns from
-              const NoteBar(
+              NoteBar(
                 color: AppColors.forest,
                 background: AppColors.forestSoft,
                 child: Text(
@@ -578,7 +579,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       fill: missing
           ? null
           : (recorded ? color : color.withValues(alpha: 0.14)),
-      textColor: recorded && !missing ? Colors.white : color,
+      textColor: recorded && !missing ? AppColors.onFill : color,
       bold: !missing,
       marked: today || selected,
     );
@@ -631,12 +632,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('RubberTap'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh, size: 22),
-            onPressed: _isLoading ? null : _fetchAll,
-          ),
+        actions: const [
+          SettingsButton(),
+          SizedBox(width: 4),
         ],
       ),
       body: _isLoading
@@ -648,11 +646,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
                 children: [
-                  _buildHeader(),
+                  Reveal(child: _buildHeader()),
                   const SizedBox(height: 20),
-                  _buildToday(),
+                  Reveal(index: 1, child: _buildToday()),
                   const SizedBox(height: 16),
-                  _buildOverview(),
+                  Reveal(index: 2, child: _buildOverview()),
                   if (_forecastIsOld()) ...[
                     const SizedBox(height: 16),
                     _buildOldForecast(),
@@ -662,7 +660,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     _buildAttention(),
                   ],
                   const SizedBox(height: 32),
-                  _buildCalendarSection(),
+                  Reveal(index: 3, child: _buildCalendarSection()),
                 ],
               ),
             ),
@@ -678,12 +676,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         Text('${_greeting()}, Arnel', style: AppText.display),
         if (_offline) ...[
           const SizedBox(height: 14),
-          const NoteBar(
+          NoteBar(
             color: AppColors.caution,
             background: AppColors.bronzeSoft,
             child: Text(
               'No internet. The numbers below may be missing or out of date. '
-              'Pull the refresh button when there is signal.',
+              'Pull the screen down to reload when there is signal.',
               style: AppText.body,
             ),
           ),
@@ -702,7 +700,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final block = (data?['block'] ??
             blockForDay(today.day - cycleStart.day + 1))
         .toString();
-    final color = blockColor(block);
     final expected = data?['predicted_yield'];
     final weather = data?['weather'];
     final rain = data?['rainfall'];
@@ -711,22 +708,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final savedWeather =
         weather != null ? dayWeatherText(weather, rain) : null;
 
-    return Panel(
-      padding: const EdgeInsets.all(18),
+    // A note inside the coloured card: see-through white, white text
+    Widget glassNote(Widget child) => Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0x26FFFFFF),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0x33FFFFFF)),
+          ),
+          child: child,
+        );
+
+    // The card takes the colour of the block to tap today
+    return HeroPanel(
+      bronze: block == 'Block B',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SectionLabel('Today'),
-          const SizedBox(height: 10),
+          const Text('Today', style: OnHero.label),
+          const SizedBox(height: 8),
           Row(
             children: [
-              Container(
-                width: 12,
-                height: 12,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-              ),
+              const Icon(Icons.forest_outlined, size: 26, color: Colors.white),
               const SizedBox(width: 10),
-              Expanded(child: Text('Tap $block', style: AppText.title)),
+              Expanded(
+                child: Text('Tap $block',
+                    style: OnHero.title.copyWith(fontSize: 28)),
+              ),
             ],
           ),
           // Same wording as the calendar (saved label until it loads)
@@ -740,40 +749,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ];
               if (details.isEmpty) return const SizedBox.shrink();
               return Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(details.join(' · '), style: AppText.body),
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(details.join(' · '), style: OnHero.body),
               );
             },
           ),
           const SizedBox(height: 4),
           Text(
             'Cycle ${_prettyDay(isoDate(cycleStart))} – ${_prettyDay(isoDate(cycleEnd))}',
-            style: AppText.caption,
+            style: OnHero.caption,
           ),
           if (_morningAdvice != null) ...[
-            const SizedBox(height: 12),
-            NoteBar(
-              color: _morningAdvice!.color,
-              background: _morningAdvice!.soft,
-              child: Column(
+            const SizedBox(height: 14),
+            glassNote(
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(_morningAdvice!.title, style: AppText.bodyStrong),
+                  Text(_morningAdvice!.title, style: OnHero.bodyStrong),
                   const SizedBox(height: 2),
-                  Text(_morningAdvice!.text, style: AppText.body),
+                  Text(_morningAdvice!.text, style: OnHero.body),
                 ],
               ),
             ),
           ],
           if (weighDay) ...[
             const SizedBox(height: 12),
-            const NoteBar(
-              color: AppColors.forest,
-              background: AppColors.forestSoft,
-              child: Text(
+            glassNote(
+              const Text(
                 'Weigh day: record each block\'s total for this cycle in the '
                 'Production tab.',
-                style: AppText.body,
+                style: OnHero.body,
               ),
             ),
           ],
@@ -815,15 +820,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(18),
-                child: Figure(
-                  label: 'Next cycle forecast',
-                  value: hasForecast
-                      ? '${_lastForecast.toStringAsFixed(1)} kg'
-                      : '—',
-                  note: hasForecast
-                      ? 'both blocks, 15 days'
-                      : 'updated every morning',
-                ),
+                child: hasForecast
+                    // the number counts up when the dashboard opens
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SectionLabel('Next cycle forecast'),
+                          const SizedBox(height: 6),
+                          AnimatedCount(
+                            value: _lastForecast,
+                            suffix: ' kg',
+                            style: AppText.figure,
+                          ),
+                          const SizedBox(height: 4),
+                          Text('both blocks, 15 days',
+                              style: AppText.caption),
+                        ],
+                      )
+                    : const Figure(
+                        label: 'Next cycle forecast',
+                        value: '—',
+                        note: 'updated every morning',
+                      ),
               ),
             ),
           ],
@@ -870,12 +889,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SectionLabel('Tapping calendar'),
-                  SizedBox(height: 4),
+                  const SectionLabel('Tapping calendar'),
+                  const SizedBox(height: 4),
                   Text('15-day cycles', style: AppText.heading),
                 ],
               ),
@@ -888,7 +907,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
         const SizedBox(height: 14),
-        const Wrap(
+        Wrap(
           spacing: 18,
           runSpacing: 6,
           children: [
@@ -939,12 +958,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _dayCell(day, selected: true) ??
                   _plainDay(day, selected: true),
             ),
-            calendarStyle: const CalendarStyle(
+            calendarStyle: CalendarStyle(
               outsideDaysVisible: false,
               defaultTextStyle: TextStyle(fontSize: 13, color: AppColors.ink),
               weekendTextStyle: TextStyle(fontSize: 13, color: AppColors.ink),
             ),
-            headerStyle: const HeaderStyle(
+            headerStyle: HeaderStyle(
               formatButtonVisible: false,
               titleCentered: false,
               titleTextStyle: AppText.heading,
@@ -953,7 +972,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               rightChevronIcon:
                   Icon(Icons.chevron_right, color: AppColors.ink),
             ),
-            daysOfWeekStyle: const DaysOfWeekStyle(
+            daysOfWeekStyle: DaysOfWeekStyle(
               weekdayStyle: AppText.label,
               weekendStyle: AppText.label,
             ),

@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:app_settings/app_settings.dart';
 import '../theme.dart';
+import '../weather_sky.dart';
+import 'settings_screen.dart';
 import '../farm_weather.dart';
 import '../rain_alerts.dart';
 import '../tapping_advice.dart';
@@ -156,7 +159,7 @@ class _WeatherScreenState extends State<WeatherScreen>
   _Advice _advice(String weatherMain, double humidity) {
     final w = weatherMain.toLowerCase();
     if (w.contains('thunderstorm')) {
-      return const _Advice(
+      return _Advice(
         title: 'Do not tap today',
         text: 'Thunderstorms are dangerous for outdoor farm work.',
         color: AppColors.alert,
@@ -164,7 +167,7 @@ class _WeatherScreenState extends State<WeatherScreen>
       );
     }
     if (w.contains('rain') || w.contains('drizzle')) {
-      return const _Advice(
+      return _Advice(
         title: 'Better to wait',
         text:
             'Tapping in the rain is not recommended. Waiting for drier conditions protects the latex.',
@@ -173,7 +176,7 @@ class _WeatherScreenState extends State<WeatherScreen>
       );
     }
     if (w.contains('clear') && humidity < 70) {
-      return const _Advice(
+      return _Advice(
         title: 'Good day for tapping',
         text: 'Clear skies and lower humidity are generally good for tapping.',
         color: AppColors.good,
@@ -181,7 +184,7 @@ class _WeatherScreenState extends State<WeatherScreen>
       );
     }
     if (w.contains('cloud')) {
-      return const _Advice(
+      return _Advice(
         title: 'Fine for tapping',
         text: 'Cloudy but dry. Conditions are suitable for tapping.',
         color: AppColors.good,
@@ -189,7 +192,7 @@ class _WeatherScreenState extends State<WeatherScreen>
       );
     }
     if (humidity > 85) {
-      return const _Advice(
+      return _Advice(
         title: 'Watch the humidity',
         text:
             'Very humid air may affect latex quality. Early morning tapping can help.',
@@ -197,7 +200,7 @@ class _WeatherScreenState extends State<WeatherScreen>
         soft: AppColors.bronzeSoft,
       );
     }
-    return const _Advice(
+    return _Advice(
       title: 'Fine for tapping',
       text: 'Conditions are suitable. Keep an eye on the weather during the day.',
       color: AppColors.good,
@@ -207,35 +210,77 @@ class _WeatherScreenState extends State<WeatherScreen>
 
   // ------------------------------------------------------------------ build
 
+  /// The page sits on a moving sky that follows the weather right now
+  /// (weather_sky.dart). The app bar takes the sky's top colour so the two
+  /// read as one surface; everything on the sky is white.
   @override
   Widget build(BuildContext context) {
+    // For showing or testing a sky that is not today's weather, the app can
+    // be started with e.g. --dart-define=SKY=Rain:day (or Clear:night...).
+    // Only the background changes; the readings stay real. Empty in releases.
+    const demoSky = String.fromEnvironment('SKY');
+    final demo = demoSky.split(':');
+    final hour = DateTime.now().hour;
+    final night = demoSky.isNotEmpty
+        ? demo.last == 'night'
+        : (hour < 6 || hour >= 18);
+    // Before the first reading arrives: a plain cloudy sky
+    final kind =
+        demoSky.isNotEmpty ? demo.first : (_weather?.now.kind ?? 'Clouds');
+    final top = skyColors(kind, night).first;
     return Scaffold(
+      backgroundColor: top,
       appBar: AppBar(
+        backgroundColor: top,
+        foregroundColor: Colors.white,
+        systemOverlayStyle: SystemUiOverlayStyle.light,
+        titleTextStyle: Theme.of(context)
+            .appBarTheme
+            .titleTextStyle
+            ?.copyWith(color: Colors.white),
         title: const Text('Weather'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh, size: 22),
-            onPressed: _isLoading ? null : _fetchWeather,
-          ),
+        actions: const [
+          SettingsButton(color: Colors.white),
+          SizedBox(width: 4),
         ],
       ),
-      body: _buildBody(),
+      body: Stack(
+        children: [
+          Positioned.fill(child: WeatherSky(kind: kind, night: night)),
+          _buildBody(),
+        ],
+      ),
     );
   }
+
+  /// Cards on the sky let a little of it show through.
+  Color get _card => AppColors.surface.withValues(alpha: 0.94);
+
+  Widget _skyLabel(String text) => Text(text, style: OnHero.label);
 
   Widget _buildBody() {
     if (_weather == null) {
       if (_isLoading) {
-        return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+        return const Center(
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+        );
       }
-      return QuietMessage(
-        icon: Icons.cloud_off_outlined,
-        title: 'Weather is not available',
-        message: 'Please check your internet connection and try again.',
-        action: ElevatedButton(
-          onPressed: _fetchWeather,
-          child: const Text('Try again'),
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Panel(
+            color: _card,
+            padding: EdgeInsets.zero,
+            child: QuietMessage(
+              icon: Icons.cloud_off_outlined,
+              title: 'Weather is not available',
+              message: 'Please check your internet connection and try again.',
+              action: ElevatedButton(
+                onPressed: _fetchWeather,
+                child: const Text('Try again'),
+              ),
+            ),
+          ),
         ),
       );
     }
@@ -263,24 +308,15 @@ class _WeatherScreenState extends State<WeatherScreen>
       onRefresh: _fetchWeather,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Mr. Arnel’s farm · Zamboanga Sibugay',
-                  style: AppText.caption),
-              Text(_updatedText(),
-                  style: const TextStyle(
-                      fontSize: 11, color: AppColors.inkFaint)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _buildNow(w, main),
+          Reveal(child: _buildNow(w, main)),
           const SizedBox(height: 28),
-          const SectionLabel('Tapping advice'),
+          _skyLabel('Tapping advice'),
           const SizedBox(height: 10),
-          NoteBar(
+          Reveal(
+            index: 1,
+            child: NoteBar(
             color: advice.color,
             background: advice.soft,
             child: Column(
@@ -294,23 +330,24 @@ class _WeatherScreenState extends State<WeatherScreen>
                   morning == null
                       ? 'Based on the weather right now. The morning forecast could not be loaded.'
                       : 'For the tapping morning (4–11 AM), from the hourly forecast. General guidance.',
-                  style: const TextStyle(fontSize: 11, color: AppColors.inkFaint),
+                  style: TextStyle(fontSize: 12, color: AppColors.inkFaint),
                 ),
               ],
             ),
+            ),
           ),
           const SizedBox(height: 28),
-          const SectionLabel('Rain alerts'),
+          _skyLabel('Next 24 hours'),
           const SizedBox(height: 10),
-          _buildAlerts(),
+          Reveal(index: 2, child: _buildHourly()),
           const SizedBox(height: 28),
-          const SectionLabel('Next 24 hours'),
+          _skyLabel('Rain alerts'),
           const SizedBox(height: 10),
-          _buildHourly(),
+          Reveal(index: 3, child: _buildAlerts()),
           const SizedBox(height: 28),
-          const SectionLabel('General guide'),
+          _skyLabel('General guide'),
           const SizedBox(height: 10),
-          _buildGuide(),
+          Reveal(index: 4, child: _buildGuide()),
         ],
       ),
     );
@@ -318,6 +355,7 @@ class _WeatherScreenState extends State<WeatherScreen>
 
   Widget _buildAlerts() {
     return Panel(
+      color: _card,
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -370,79 +408,103 @@ class _WeatherScreenState extends State<WeatherScreen>
     final humidity = w.now.humidity.toStringAsFixed(0);
     final wind = w.now.windKmh.toStringAsFixed(0);
 
-    Widget cell(String label, String value) => Expanded(
+    Widget cell(IconData icon, String label, String value) => Expanded(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SectionLabel(label),
-                const SizedBox(height: 6),
-                Text(value, style: AppText.heading),
+                Icon(icon, size: 20, color: OnHero.soft),
+                const SizedBox(height: 8),
+                Text(value,
+                    style: OnHero.title.copyWith(fontSize: 20, height: 1.1)),
+                const SizedBox(height: 2),
+                Text(label, style: OnHero.caption),
               ],
             ),
           ),
         );
+    final divider = Container(width: 1, color: const Color(0x33FFFFFF));
 
-    return Panel(
-      padding: EdgeInsets.zero,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SectionLabel('At the farm now'),
-                      const SizedBox(height: 10),
-                      Text(
-                        '$temp°',
-                        style: const TextStyle(
-                          fontFamily: AppText.serif,
-                          fontSize: 64,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.ink,
-                          height: 1,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(description, style: AppText.body),
-                    ],
+    // Straight on the sky, no card: the reading is the headline
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Mr. Arnel’s farm · Zamboanga Sibugay',
+            style: OnHero.caption),
+        const SizedBox(height: 14),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AnimatedCount(
+                    value: double.parse(temp),
+                    decimals: 0,
+                    suffix: '°',
+                    style: const TextStyle(
+                      fontFamily: AppText.displayFont,
+                      fontSize: 96,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -3,
+                      color: Colors.white,
+                      height: 1,
+                    ),
                   ),
-                ),
-                Icon(_icon(main), size: 52, color: AppColors.forest),
-              ],
+                  const SizedBox(height: 6),
+                  Text(description,
+                      style: OnHero.title.copyWith(fontSize: 20)),
+                  const SizedBox(height: 4),
+                  Text('At the farm now · ${_updatedText()}',
+                      style: OnHero.caption),
+                ],
+              ),
             ),
+            // On a clear sky the painted sun or moon sits in this corner, so
+            // no icon is drawn on top of it
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: main == 'Clear'
+                  ? const SizedBox(width: 76, height: 76)
+                  : Icon(_icon(main), size: 76, color: Colors.white),
+            ),
+          ],
+        ),
+        const SizedBox(height: 22),
+        // "Glass" strip: see-through, so the sky keeps moving behind it
+        Container(
+          decoration: BoxDecoration(
+            color: const Color(0x29FFFFFF),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0x40FFFFFF)),
           ),
-          const Divider(),
-          IntrinsicHeight(
+          child: IntrinsicHeight(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                cell('Humidity', '$humidity%'),
-                const VerticalDivider(width: 1),
-                cell('Wind', '$wind km/h'),
-                const VerticalDivider(width: 1),
-                cell('Feels like', '$feels°'),
+                cell(Icons.water_drop_outlined, 'Humidity', '$humidity%'),
+                divider,
+                cell(Icons.air, 'Wind', '$wind km/h'),
+                divider,
+                cell(Icons.thermostat_outlined, 'Feels like', '$feels°'),
               ],
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   Widget _buildHourly() {
     // The next 24 hours, every 3 hours (from hourly data)
-    final hours = _weather?.hours ?? const <FarmHour>[];
+    final hours = _weather?.hours ?? <FarmHour>[];
     final strip = [
       for (var i = 0; i < hours.length && i < 24; i += 3) hours[i],
     ];
     return Panel(
+      color: _card,
       padding: const EdgeInsets.symmetric(vertical: 16),
       child: SizedBox(
         height: 108,
@@ -457,8 +519,8 @@ class _WeatherScreenState extends State<WeatherScreen>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(_formatHour(h.time),
-                    style: const TextStyle(
-                        fontSize: 11, color: AppColors.inkSoft)),
+                    style: TextStyle(
+                        fontSize: 12, color: AppColors.inkSoft)),
                 const SizedBox(height: 6),
                 Icon(_icon(h.kind), size: 22, color: AppColors.inkSoft),
                 const SizedBox(height: 6),
@@ -466,8 +528,8 @@ class _WeatherScreenState extends State<WeatherScreen>
                 const SizedBox(height: 2),
                 // Chance of rain, shown when it matters
                 Text(h.rainChance >= 30 ? '${h.rainChance}%' : ' ',
-                    style: const TextStyle(
-                        fontSize: 11, color: AppColors.inkSoft)),
+                    style: TextStyle(
+                        fontSize: 12, color: AppColors.inkSoft)),
               ],
             );
           },
@@ -482,7 +544,7 @@ class _WeatherScreenState extends State<WeatherScreen>
           decoration: BoxDecoration(
             border: last
                 ? null
-                : const Border(bottom: BorderSide(color: AppColors.line)),
+                : Border(bottom: BorderSide(color: AppColors.line)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -495,6 +557,7 @@ class _WeatherScreenState extends State<WeatherScreen>
         );
 
     return Panel(
+      color: _card,
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -506,9 +569,9 @@ class _WeatherScreenState extends State<WeatherScreen>
           line('High humidity (above 80%)', 'May affect latex quality.',
               last: true),
           const SizedBox(height: 10),
-          const Text(
+          Text(
             'General guidance only. These are not measurements from your farm.',
-            style: TextStyle(fontSize: 11, color: AppColors.inkFaint),
+            style: TextStyle(fontSize: 12, color: AppColors.inkFaint),
           ),
         ],
       ),

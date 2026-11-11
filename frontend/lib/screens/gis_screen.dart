@@ -7,6 +7,7 @@ import '../farm_geometry.dart';
 import '../main.dart';
 import '../record_store.dart';
 import '../theme.dart';
+import 'settings_screen.dart';
 
 // Free map sources (no key, no billing). Esri imagery must be credited.
 const _satelliteTiles =
@@ -151,12 +152,9 @@ class _GisScreenState extends State<GisScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Farm map'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh, size: 22),
-            onPressed: _isLoading ? null : _fetchData,
-          ),
+        actions: const [
+          SettingsButton(),
+          SizedBox(width: 4),
         ],
       ),
       body: _isLoading
@@ -181,7 +179,7 @@ class _GisScreenState extends State<GisScreen> {
                           ? 'Imagery © Esri, Maxar, Earthstar Geographics'
                           : '© OpenStreetMap contributors',
                       style:
-                          const TextStyle(fontSize: 9, color: AppColors.inkSoft),
+                          TextStyle(fontSize: 11, color: AppColors.inkSoft),
                     ),
                   ),
                 ),
@@ -490,7 +488,7 @@ class _GisScreenState extends State<GisScreen> {
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 14,
-                        color: active ? Colors.white : AppColors.ink,
+                        color: active ? AppColors.onFill : AppColors.ink,
                       ))
                   : Icon(icon, size: 22, color: AppColors.ink),
             ),
@@ -511,6 +509,8 @@ class _GisScreenState extends State<GisScreen> {
                   : Icons.satellite_alt_outlined),
           button('Show whole farm', _recentre,
               icon: Icons.center_focus_strong_outlined),
+          // The map cannot be pulled down, so reload lives here
+          button('Reload the forecast', _fetchData, icon: Icons.refresh),
         ],
       ),
     );
@@ -546,20 +546,20 @@ class _GisScreenState extends State<GisScreen> {
           row(AppColors.alert, 'Much lower'),
           if (_is3D) ...[
             const SizedBox(height: 6),
-            const Row(
+            Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(Icons.height, size: 12, color: AppColors.inkSoft),
-                SizedBox(width: 5),
+                const SizedBox(width: 5),
                 Text('Taller = bigger forecast', style: AppText.caption),
               ],
             ),
           ],
           if (blockOutlinesArePlaceholders) ...[
             const SizedBox(height: 6),
-            const Text('Block outlines are approximate',
+            Text('Block outlines are approximate',
                 style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 12,
                     fontStyle: FontStyle.italic,
                     color: AppColors.inkFaint)),
           ],
@@ -569,13 +569,13 @@ class _GisScreenState extends State<GisScreen> {
   }
 
   Widget _buildHint() {
-    return const Panel(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    return Panel(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.touch_app_outlined, size: 18, color: AppColors.inkSoft),
-          SizedBox(width: 8),
+          const SizedBox(width: 8),
           Flexible(
             child: Text('Tap a block for details. Tilt with two fingers.',
                 style: AppText.caption),

@@ -20,7 +20,11 @@ const _skippedKey = 'update_skipped_version_code';
 
 /// Checks once for a newer version and shows a dialog if there is one.
 /// Never throws: an update check must not get in the way of using the app.
-Future<void> checkForUpdate(BuildContext context) async {
+///
+/// [manual] is true when the farmer taps "Check for updates" in Settings:
+/// the answer is then always shown, also "you have the latest version", and
+/// an earlier "Later" is ignored.
+Future<void> checkForUpdate(BuildContext context, {bool manual = false}) async {
   try {
     final info = await PackageInfo.fromPlatform();
     // Per-phone-type APKs (--split-per-abi) add 1000 x the type number to the
@@ -33,15 +37,19 @@ Future<void> checkForUpdate(BuildContext context) async {
         .order('version_code', ascending: false)
         .limit(1);
     final list = List<Map<String, dynamic>>.from(rows);
-    if (list.isEmpty) return;
-    final latest = list.first;
-    final latestCode = (latest['version_code'] as num).toInt();
-    if (latestCode <= current) return;
+    final latest = list.isEmpty ? null : list.first;
+    final latestCode = (latest?['version_code'] as num?)?.toInt() ?? 0;
+    if (latest == null || latestCode <= current) {
+      if (manual && context.mounted) {
+        showNote(context, 'You have the latest version (${info.version}).');
+      }
+      return;
+    }
 
     // "Later" hides this version until the next app start after a day
     final prefs = await SharedPreferences.getInstance();
     final skipped = prefs.getString(_skippedKey);
-    if (skipped != null) {
+    if (skipped != null && !manual) {
       final parts = skipped.split('@');
       final when = DateTime.tryParse(parts.length > 1 ? parts[1] : '');
       if (parts.first == '$latestCode' &&
@@ -69,12 +77,12 @@ Future<void> checkForUpdate(BuildContext context) async {
             ),
             if (notes.isNotEmpty) ...[
               const SizedBox(height: 12),
-              const Text("What's new", style: AppText.bodyStrong),
+              Text("What's new", style: AppText.bodyStrong),
               const SizedBox(height: 4),
               Text(notes, style: AppText.caption),
             ],
             const SizedBox(height: 12),
-            const Text(
+            Text(
               'Tap Download, then open the file and tap Update. '
               'Your records are kept.',
               style: AppText.caption,
@@ -102,5 +110,9 @@ Future<void> checkForUpdate(BuildContext context) async {
     }
   } catch (e) {
     debugPrint('Update check skipped: $e');
+    if (manual && context.mounted) {
+      showNote(context, 'Could not check right now. Please try again with internet.',
+          error: true);
+    }
   }
 }

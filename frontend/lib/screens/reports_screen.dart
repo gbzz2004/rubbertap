@@ -59,7 +59,7 @@ class ReportsScreen extends StatelessWidget {
               leading: Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: (report['color'] as Color).withOpacity(0.1),
+                  color: (report['color'] as Color).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
