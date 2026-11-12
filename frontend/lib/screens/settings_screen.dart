@@ -88,6 +88,19 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
   }
 
+  /// RubberTap's own page in the phone's Settings (App info), where Battery
+  /// is set to "Unrestricted" so the background rain checks are not stopped.
+  Future<void> _openBatterySettings() async {
+    try {
+      await AppSettings.openAppSettings(type: AppSettingsType.settings);
+    } catch (_) {
+      if (mounted) {
+        showNote(context,
+            'Open your phone Settings > Apps > RubberTap > Battery > Unrestricted.');
+      }
+    }
+  }
+
   Future<void> _sendTest() async {
     try {
       await RainAlertService.sendTest();
@@ -179,6 +192,28 @@ class _SettingsScreenState extends State<SettingsScreen>
                         ),
                     ],
                   ),
+                  if (alertsOn) ...[
+                    const SizedBox(height: 16),
+                    Divider(color: AppColors.line),
+                    const SizedBox(height: 14),
+                    // Alerts are checked in the background about every 30
+                    // minutes; many phones stop that to save battery
+                    _row(
+                      icon: Icons.battery_charging_full_outlined,
+                      title: 'Alerts when the app is closed',
+                      text: 'Rain is checked about every 30 minutes, even when '
+                          'RubberTap is closed. Some phones stop this to save '
+                          'battery. To keep alerts coming, open the battery '
+                          'setting, tap "Battery" (or "App battery usage"), '
+                          'and choose "Unrestricted" (or "No restrictions").',
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _openBatterySettings,
+                      icon: const Icon(Icons.open_in_new, size: 18),
+                      label: const Text('Open battery setting'),
+                    ),
+                  ],
                 ],
               ),
             ),

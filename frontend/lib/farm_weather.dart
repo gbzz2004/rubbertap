@@ -11,6 +11,11 @@
 import 'package:dio/dio.dart';
 import 'cycle_plan.dart' show farmLat, farmLon;
 
+/// Rain in one hour from which the app says it is raining. The weather
+/// service often labels an hour "drizzle" for a trace (0.1 mm) under a mostly
+/// sunny sky; phone weather apps call that sunny, and so does RubberTap.
+const double rainingMmPerHour = 0.5;
+
 /// One hour of forecast at the farm (Manila clock time).
 class FarmHour {
   final DateTime time;
@@ -18,8 +23,10 @@ class FarmHour {
   final int rainChance; // 0-100 %
   final double rainMm;
   final int code;
-  const FarmHour(this.time, this.temp, this.rainChance, this.rainMm, this.code);
-  String get kind => kindOf(code);
+  final double? cloud; // cloud cover %, if known
+  const FarmHour(this.time, this.temp, this.rainChance, this.rainMm, this.code,
+      [this.cloud]);
+  String get kind => kindFor(code, rainMm, cloud);
 }
 
 /// The weather at the farm right now.
@@ -30,10 +37,45 @@ class FarmNow {
   final double windKmh;
   final double rainMm; // rain in the current hour
   final int code;
+  final double? cloud; // cloud cover %, if known
   const FarmNow(this.temp, this.feelsLike, this.humidity, this.windKmh,
-      this.rainMm, this.code);
-  String get kind => kindOf(code);
-  String get description => describe(code);
+      this.rainMm, this.code, [this.cloud]);
+  String get kind => kindFor(code, rainMm, cloud);
+  String get description => describeNow(code, rainMm, cloud);
+}
+
+/// True when the service's label says rain or drizzle but the amount in the
+/// hour is too small to count as raining.
+bool _onlyATrace(int code, double rainMm) {
+  final k = kindOf(code);
+  return (k == 'Rain' || k == 'Drizzle') && rainMm < rainingMmPerHour;
+}
+
+/// The kind the screens use: the service's label, except that a trace of
+/// drizzle or rain is described by the sky instead (cloud cover).
+String kindFor(int code, double rainMm, double? cloud) {
+  if (!_onlyATrace(code, rainMm)) return kindOf(code);
+  return (cloud != null && cloud < 50) ? 'Clear' : 'Clouds';
+}
+
+/// Plain words for right now, e.g. "Mostly sunny, a few drops (0.1 mm)".
+String describeNow(int code, double rainMm, double? cloud) {
+  if (!_onlyATrace(code, rainMm)) return describe(code);
+  final String sky;
+  if (cloud == null) {
+    sky = 'Cloudy';
+  } else if (cloud < 20) {
+    sky = 'Sunny';
+  } else if (cloud < 50) {
+    sky = 'Mostly sunny';
+  } else if (cloud < 85) {
+    sky = 'Partly cloudy';
+  } else {
+    sky = 'Overcast';
+  }
+  return rainMm >= 0.05
+      ? '$sky, a few drops (${rainMm.toStringAsFixed(1)} mm)'
+      : sky;
 }
 
 class FarmWeather {
@@ -111,9 +153,9 @@ Future<FarmWeather> fetchFarmWeather() async {
             'longitude': farmLon,
             'current':
                 'temperature_2m,apparent_temperature,relative_humidity_2m,'
-                    'wind_speed_10m,precipitation,weather_code',
-            'hourly':
-                'temperature_2m,precipitation_probability,precipitation,weather_code',
+                    'wind_speed_10m,precipitation,weather_code,cloud_cover',
+            'hourly': 'temperature_2m,precipitation_probability,precipitation,'
+                'weather_code,cloud_cover',
             'timezone': 'Asia/Manila',
             'forecast_days': 3,
           });
@@ -133,6 +175,7 @@ Future<FarmWeather> fetchFarmWeather() async {
     n(c['wind_speed_10m']),
     n(c['precipitation']),
     n(c['weather_code']).round(),
+    (c['cloud_cover'] as num?)?.toDouble(),
   );
 
   // Hours from the current one on. Times are Manila clock times, compared
@@ -151,6 +194,7 @@ Future<FarmWeather> fetchFarmWeather() async {
       n((h['precipitation_probability'] as List)[i]).round(),
       n((h['precipitation'] as List)[i]),
       n((h['weather_code'] as List)[i]).round(),
+      ((h['cloud_cover'] as List?)?[i] as num?)?.toDouble(),
     ));
     if (hours.length == 48) break;
   }

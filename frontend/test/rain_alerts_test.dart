@@ -38,8 +38,20 @@ void main() {
   });
 
   test('raining now', () {
-    expect(RainAlertService.decide(weather(nowCode: 61))!.type, 'now');
+    expect(RainAlertService.decide(weather(nowCode: 61, nowRain: 1.2))!.type,
+        'now');
     expect(RainAlertService.decide(weather(nowRain: 0.5))!.type, 'now');
+  });
+
+  test('a trace of drizzle is not "raining now"', () {
+    // 12 Nov 2026, 11 AM: "drizzle", 0.1 mm, 38% cloud: phones said sunny
+    expect(RainAlertService.decide(weather(nowCode: 51, nowRain: 0.1)), isNull);
+    expect(kindFor(51, 0.1, 38), 'Clear');
+    expect(kindFor(51, 0.1, 90), 'Clouds');
+    expect(kindFor(55, 1.2, 90), 'Drizzle');
+    expect(kindFor(95, 0.0, 90), 'Thunderstorm');
+    expect(describeNow(51, 0.1, 38), 'Mostly sunny, a few drops (0.1 mm)');
+    expect(describeNow(3, 0.0, 90), 'Overcast');
   });
 
   test('rain likely at a given hour (hourly, not 3-hourly)', () {

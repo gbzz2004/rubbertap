@@ -178,7 +178,11 @@ class RainAlertService {
     }
 
     // 2) Raining now
-    if (w.now.kind == 'Rain' || w.now.kind == 'Drizzle' || w.now.rainMm >= 0.2) {
+    // From the amount (rainingMmPerHour), not the service's "drizzle" label,
+    // so a trace of rain under a sunny sky does not send a warning
+    if (w.now.kind == 'Rain' ||
+        w.now.kind == 'Drizzle' ||
+        w.now.rainMm >= rainingMmPerHour) {
       return const RainAlert(
         type: 'now',
         rank: 3,

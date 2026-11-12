@@ -124,6 +124,12 @@ and restart it.
   cycle_plan.dart; cut-offs 1 / 2.5 / 5 / 10 mm and 6 h of sun are the app's
   own grouping, not an official scale). Saved labels of older recorded days
   are still the old all-Rainy ones; the app words them from the rain amount.
+  Weather now (Weather tab, its sky, rain alerts): "raining" only from 0.5 mm
+  in the hour (rainingMmPerHour, farm_weather.dart); a smaller "drizzle" is
+  worded by cloud cover ("Mostly sunny, a few drops"). Thunderstorms always
+  show. Rain alerts run in the background (WorkManager, ~30 min) only after
+  the app was opened once with notifications allowed; phones may delay or
+  stop them (battery saving), hence Settings > "Open battery setting".
 - The models run on GitHub Actions at 06:13 and 12:13 Manila (backup) and save
   results to Supabase; the app reads them, so it needs no PC. Pulling a screen
   down only reloads saved results; a fresh run is started from the
